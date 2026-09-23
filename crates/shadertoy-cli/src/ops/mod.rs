@@ -217,7 +217,7 @@ pub enum InspectVisualization {
 pub struct InspectBufferOptions {
     pub project: PathBuf,
     pub pass: String,
-    pub output_index: u8,
+    pub pass_output: crate::manifest::PassOutput,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub fps: Option<f32>,

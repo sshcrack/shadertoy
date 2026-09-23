@@ -1172,7 +1172,7 @@ dependencies = [
 
 [[package]]
 name = "shadertoy-cli"
-version = "2.6.0"
+version = "2.6.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -1193,7 +1193,7 @@ dependencies = [
 
 [[package]]
 name = "shadertoy-native"
-version = "2.6.0"
+version = "2.6.1"
 dependencies = [
  "shadertoy-sys",
  "thiserror",
@@ -1201,7 +1201,7 @@ dependencies = [
 
 [[package]]
 name = "shadertoy-sys"
-version = "2.6.0"
+version = "2.6.1"
 dependencies = [
  "bindgen",
  "cmake",

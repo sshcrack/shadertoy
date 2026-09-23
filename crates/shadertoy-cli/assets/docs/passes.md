@@ -85,8 +85,9 @@ When depth = true, the rasterizer uses LESS depth testing and exposes raw
   filter = "nearest"
   wrap = "clamp"
 
-The named depth output is separate from numeric MRT indices. Use
---wireframe ocean-mesh with render, render-frames, or preview for a flat,
+The named depth output is separate from numeric MRT indices. Inspect it with
+`shadertoy inspect buffer ocean-mesh --pass-output depth`. Use
+`--wireframe ocean-mesh` with render, render-frames, or preview for a flat,
 depth-tested grid overlay. check --json and profile --json report mesh grid,
 instance, vertex, and triangle counts.
 

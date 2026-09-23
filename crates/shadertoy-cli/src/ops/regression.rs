@@ -160,9 +160,14 @@ fn run_case_inner(
         .iter()
         .find(|pass| pass.name == selected_name)
         .with_context(|| format!("unknown test pass '{selected_name}'"))?;
-    if pass.kind == PassKind::Cubemap {
-        bail!("test pass '{selected_name}' is a cubemap; only 2D passes are supported");
+    if matches!(pass.kind, PassKind::Cubemap | PassKind::Sound) {
+        bail!("test pass '{selected_name}' is not a renderable 2D pass");
     }
+    let native_output = test_output_index(
+        pass,
+        test.output,
+        loaded.manifest.final_pass().name.as_str(),
+    )?;
 
     let uniform_values = crate::uniforms::merge_values(&loaded.manifest.uniforms, &test.uniforms)?;
     let reference_uniform_values = if test.reference_uniforms.is_empty() {
@@ -195,6 +200,7 @@ fn run_case_inner(
                 context,
                 loaded,
                 pass,
+                native_output,
                 *frame,
                 fps,
                 *width,
@@ -222,6 +228,7 @@ fn run_case_inner(
                 context,
                 loaded,
                 pass,
+                native_output,
                 variant.frame,
                 fps,
                 variant.width,
@@ -400,6 +407,7 @@ fn run_case_inner(
                 context,
                 loaded,
                 pass,
+                native_output,
                 variant.frame,
                 fps,
                 variant.width,
@@ -483,11 +491,41 @@ fn test_resolutions(loaded: &LoadedManifest, test: &TestCase) -> Vec<(u32, u32)>
     )]
 }
 
+fn test_output_index(
+    pass: &crate::manifest::Pass,
+    output: crate::manifest::PassOutput,
+    final_pass: &str,
+) -> Result<u32> {
+    match output {
+        crate::manifest::PassOutput::Index(index) => {
+            if pass.name == final_pass && index != 0 {
+                bail!("final Image pass only exposes output 0");
+            }
+            if usize::from(index) > pass.extra_outputs.len() {
+                bail!(
+                    "test pass '{}' exposes outputs 0..{}; requested output {}",
+                    pass.name,
+                    pass.extra_outputs.len(),
+                    index
+                );
+            }
+            Ok(u32::from(index))
+        }
+        crate::manifest::PassOutput::Named(crate::manifest::NamedPassOutput::Depth) => {
+            if pass.kind != PassKind::Mesh || !pass.mesh.as_ref().is_some_and(|mesh| mesh.depth) {
+                bail!("test pass '{}' has no readable depth output", pass.name);
+            }
+            Ok(shadertoy::PASS_OUTPUT_DEPTH)
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_variant(
     context: &HeadlessContext,
     loaded: &LoadedManifest,
     pass: &crate::manifest::Pass,
+    native_output: u32,
     frame: i32,
     fps: f32,
     width: u32,
@@ -516,13 +554,18 @@ fn render_variant(
     } else {
         None
     };
-    let image = if pass.name == loaded.manifest.final_pass().name {
+    let image = if pass.name == loaded.manifest.final_pass().name && native_output == 0 {
         final_image
     } else {
-        runtime.snapshot_pass_rgb(&pass.name, pass_width, pass_height)?
+        runtime.snapshot_pass_output_rgb(&pass.name, native_output, pass_width, pass_height)?
     };
     let raw = if raw_requested {
-        Some(runtime.snapshot_pass_rgba32f(&pass.name, pass_width, pass_height)?)
+        Some(runtime.snapshot_pass_output_rgba32f(
+            &pass.name,
+            native_output,
+            pass_width,
+            pass_height,
+        )?)
     } else {
         None
     };

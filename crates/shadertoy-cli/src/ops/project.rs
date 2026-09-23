@@ -205,6 +205,12 @@ pub fn build_project(path: &Path, output: Option<&Path>, preset: Option<&str>) -
         &crate::uniforms::defaults(&loaded.manifest.uniforms),
     )?;
     runtime.save_sttf(&output)?;
+    annotate_sttf_render_defaults(
+        &output,
+        loaded.manifest.render.width,
+        loaded.manifest.render.height,
+        loaded.manifest.render.fps,
+    )?;
 
     Ok(Output {
         human: format!("Built {}", output.display()),
@@ -215,6 +221,37 @@ pub fn build_project(path: &Path, output: Option<&Path>, preset: Option<&str>) -
             "format": "sttf",
         }),
     })
+}
+
+pub(super) fn annotate_sttf_render_defaults(
+    path: &Path,
+    width: u32,
+    height: u32,
+    fps: f32,
+) -> Result<()> {
+    let bytes =
+        fs::read(path).with_context(|| format!("failed to read STTF build {}", path.display()))?;
+    let mut document: serde_json::Value = serde_json::from_slice(&bytes)
+        .with_context(|| format!("failed to parse STTF build {}", path.display()))?;
+    let metadata = document
+        .get_mut("metadata")
+        .and_then(serde_json::Value::as_object_mut)
+        .context("STTF build metadata must be an object")?;
+    metadata.insert(
+        "RenderWidth".to_string(),
+        serde_json::Value::String(width.to_string()),
+    );
+    metadata.insert(
+        "RenderHeight".to_string(),
+        serde_json::Value::String(height.to_string()),
+    );
+    metadata.insert(
+        "RenderFps".to_string(),
+        serde_json::Value::String(fps.to_string()),
+    );
+    fs::write(path, serde_json::to_vec_pretty(&document)?)
+        .with_context(|| format!("failed to write STTF build {}", path.display()))?;
+    Ok(())
 }
 
 fn template_name(template: Template) -> &'static str {

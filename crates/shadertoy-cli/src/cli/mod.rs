@@ -622,8 +622,11 @@ enum InspectCommand {
 struct InspectBufferArgs {
     name: String,
     /// Render-target index for MRT passes (0 is the primary output).
-    #[arg(long, default_value_t = 0)]
-    output_index: u8,
+    #[arg(long, conflicts_with = "pass_output")]
+    output_index: Option<u8>,
+    /// Pass output selector: a color target index or "depth" for a depth-enabled mesh.
+    #[arg(long, value_name = "OUTPUT", conflicts_with = "output_index")]
+    pass_output: Option<String>,
     #[arg(long)]
     width: Option<u32>,
     #[arg(long)]
@@ -756,7 +759,7 @@ struct PassArgs {
 
 #[derive(Debug, Subcommand)]
 enum PassCommand {
-    /// Add an offscreen buffer/cubemap/compute pass and create a source stub if needed.
+    /// Add an offscreen buffer/mesh/cubemap/compute pass and create a source stub if needed.
     Add {
         name: String,
         #[arg(long, value_enum, default_value_t = PassKindArg::Buffer)]
@@ -1183,7 +1186,10 @@ fn dispatch(command: Command, json_mode: bool) -> Result<Option<Output>> {
             Some(InspectCommand::Buffer(buffer)) => ops::inspect_buffer(&InspectBufferOptions {
                 project: args.project,
                 pass: buffer.name,
-                output_index: buffer.output_index,
+                pass_output: match buffer.pass_output.as_deref() {
+                    Some(output) => parse_pass_output(output)?,
+                    None => crate::manifest::PassOutput::Index(buffer.output_index.unwrap_or(0)),
+                },
                 width: buffer.width,
                 height: buffer.height,
                 fps: buffer.fps,

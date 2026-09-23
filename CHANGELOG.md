@@ -4,6 +4,12 @@ All notable changes to the Rust library and CLI are recorded here.
 
 ## Unreleased
 
+## 2.6.1
+
+- Fixed first-frame mesh color/depth consumers by correcting wireframe-composite program validation so mesh construction no longer leaks `GL_INVALID_OPERATION` into subsequent sampler setup; this also fixes paused-preview mesh reload/preset-switch frames.
+- STTF builds now retain resolved render width, height, and FPS defaults so `blind create` and `experiment` compare non-1280x720 project/STTF sources at matching dimensions while older STTF artifacts keep the legacy fallback.
+- Promoted named mesh depth into inspection, trace intermediates, and manifest regression tests via `--pass-output depth` / `output = "depth"`.
+
 ## 2.6.0
 
 - Added first-class `kind = "mesh"` raster passes with user-authored vertex shaders, generated indexed grids, instancing, shared channels/uniforms/SSBOs, culling, depth testing, and existing buffer-style color formats/MRTs.

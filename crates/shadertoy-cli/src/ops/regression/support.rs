@@ -413,6 +413,7 @@ mod tests {
         let test = TestCase {
             name: "difference".into(),
             pass: None,
+            output: crate::manifest::PassOutput::default(),
             frame: None,
             time: None,
             frames: Vec::new(),

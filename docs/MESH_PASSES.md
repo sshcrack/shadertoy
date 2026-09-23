@@ -84,6 +84,16 @@ The sampled depth is raw `gl_FragCoord.z` in the 0..1 window-depth range. Depth 
 
 Previous-frame feedback from the named depth output is intentionally rejected. Normal color output 0 retains the existing feedback rules.
 
+Named depth is first-class in debugging and regression workflows as well:
+
+```bash
+shadertoy inspect buffer ocean-mesh --pass-output depth --pixel 128,128
+shadertoy trace capture --include-intermediates -o target/mesh.sttrace
+```
+
+`trace capture --include-intermediates` writes `PASS-output-depth.png` and
+`PASS-output-depth.rgba32f`, and `[[test]]` cases can select `output = "depth"`.
+
 ## Wireframe review
 
 `render`, `render-frames`, and `preview` accept:

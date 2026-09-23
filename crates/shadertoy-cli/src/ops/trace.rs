@@ -111,6 +111,7 @@ pub fn capture_trace(options: &TraceCaptureOptions) -> Result<Output> {
 
     let sttf_path = options.output.join("project.sttf");
     runtime.save_sttf(&sttf_path)?;
+    super::project::annotate_sttf_render_defaults(&sttf_path, width, height, fps)?;
     let final_path = options.output.join("final.png");
     save_rgb_png(&final_image, &final_path)?;
 
@@ -406,17 +407,22 @@ fn capture_intermediates(
             continue;
         }
         let (pass_width, pass_height) = loaded.manifest.pass_dimensions(pass, width, height);
-        let outputs = 1 + pass.extra_outputs.len();
-        for output_index in 0..outputs {
+        let mut outputs = (0..=pass.extra_outputs.len())
+            .map(|index| (index as u32, index.to_string()))
+            .collect::<Vec<_>>();
+        if pass.kind == PassKind::Mesh && pass.mesh.as_ref().is_some_and(|mesh| mesh.depth) {
+            outputs.push((shadertoy::PASS_OUTPUT_DEPTH, "depth".to_string()));
+        }
+        for (native_output, output_label) in outputs {
             let Ok(values) = runtime.snapshot_pass_output_rgba32f(
                 &pass.name,
-                output_index as u32,
+                native_output,
                 pass_width,
                 pass_height,
             ) else {
                 continue;
             };
-            let stem = format!("{}-output-{}", file_safe_name(&pass.name), output_index);
+            let stem = format!("{}-output-{}", file_safe_name(&pass.name), output_label);
             let raw_path = root.join(format!("{stem}.rgba32f"));
             let mut bytes = Vec::with_capacity(values.len() * 4);
             for value in values {
@@ -425,22 +431,19 @@ fn capture_intermediates(
             fs::write(&raw_path, bytes)?;
             add_artifact(
                 artifacts,
-                &format!("pass:{}:output:{}:raw", pass.name, output_index),
+                &format!("pass:{}:output:{}:raw", pass.name, output_label),
                 trace_dir,
                 &raw_path,
             )?;
 
-            if let Ok(image) = runtime.snapshot_pass_output_rgb(
-                &pass.name,
-                output_index as u32,
-                pass_width,
-                pass_height,
-            ) {
+            if let Ok(image) =
+                runtime.snapshot_pass_output_rgb(&pass.name, native_output, pass_width, pass_height)
+            {
                 let png_path = root.join(format!("{stem}.png"));
                 save_rgb_png(&image, &png_path)?;
                 add_artifact(
                     artifacts,
-                    &format!("pass:{}:output:{}:png", pass.name, output_index),
+                    &format!("pass:{}:output:{}:png", pass.name, output_label),
                     trace_dir,
                     &png_path,
                 )?;

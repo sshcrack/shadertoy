@@ -333,3 +333,172 @@ fn pass_add_mesh_creates_fragment_vertex_and_grid_config() {
     let checked = shadertoy(&["check", "--project", &project_arg]);
     assert!(checked.status.success(), "{checked:?}");
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn mesh_outputs_are_visible_to_the_final_image_on_frame_zero() {
+    let temp = TempRoot::new();
+    let project = temp.0.join("frame-zero-project");
+    write_mesh_project(&project);
+    let project_arg = project.to_string_lossy().into_owned();
+
+    let output = temp.0.join("frame-zero.png");
+    let output_arg = output.to_string_lossy().into_owned();
+    let rendered = shadertoy(&[
+        "render",
+        "--project",
+        &project_arg,
+        "--frame",
+        "0",
+        "-o",
+        &output_arg,
+    ]);
+    assert!(rendered.status.success(), "{rendered:?}");
+
+    // The final Image samples the mesh color and named depth outputs directly.
+    // This specifically covers first-frame sampler setup; a stale GL error used
+    // to make both channels read black until the next render.
+    let image = image::open(&output)
+        .expect("open first-frame render")
+        .to_rgb8();
+    let pixel = image.get_pixel(0, 0).0;
+    assert!((i16::from(pixel[0]) - 64).abs() <= 2, "{pixel:?}");
+    assert!(pixel[1] <= 2, "{pixel:?}");
+    assert!((i16::from(pixel[2]) - 128).abs() <= 2, "{pixel:?}");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn named_mesh_depth_is_inspectable_traceable_and_regression_testable() {
+    let temp = TempRoot::new();
+    let project = temp.0.join("depth-workflows-project");
+    write_mesh_project(&project);
+    let project_arg = project.to_string_lossy().into_owned();
+
+    let inspected = shadertoy(&[
+        "--json",
+        "inspect",
+        "--project",
+        &project_arg,
+        "buffer",
+        "mesh",
+        "--pass-output",
+        "depth",
+        "--frame",
+        "0",
+        "--pixel",
+        "2,4",
+    ]);
+    assert!(inspected.status.success(), "{inspected:?}");
+    let report: serde_json::Value =
+        serde_json::from_slice(&inspected.stdout).expect("parse depth inspection");
+    assert_eq!(report["pass_output"], "depth");
+    assert!(report["output_index"].is_null(), "{report}");
+    assert_eq!(report["format"], "r32f");
+    let depth = report["pixel"]["rgba"][0]
+        .as_f64()
+        .expect("depth pixel should be numeric");
+    assert!((depth - 0.5).abs() < 1e-5, "{report}");
+
+    let trace = temp.0.join("mesh-depth.sttrace");
+    let trace_arg = trace.to_string_lossy().into_owned();
+    let captured = shadertoy(&[
+        "trace",
+        "capture",
+        "--project",
+        &project_arg,
+        "--frame",
+        "0",
+        "--include-intermediates",
+        "-o",
+        &trace_arg,
+    ]);
+    assert!(captured.status.success(), "{captured:?}");
+    assert!(trace.join("passes/mesh-output-depth.png").is_file());
+    assert!(trace.join("passes/mesh-output-depth.rgba32f").is_file());
+
+    let mut manifest =
+        std::fs::read_to_string(project.join("ShaderToy.toml")).expect("read manifest");
+    manifest.push_str(
+        r#"
+
+[[test]]
+name = "mesh-depth"
+pass = "mesh"
+output = "depth"
+frame = 0
+assert_no_nan = true
+assert_no_inf = true
+assert_deterministic = true
+"#,
+    );
+    std::fs::write(project.join("ShaderToy.toml"), manifest).expect("write depth test");
+
+    let tested = shadertoy(&["--json", "test", "--project", &project_arg, "--ci"]);
+    assert!(tested.status.success(), "{tested:?}");
+    let report: serde_json::Value =
+        serde_json::from_slice(&tested.stdout).expect("parse regression report");
+    assert_eq!(report["passed"], 1, "{report}");
+    assert_eq!(report["failed"], 0, "{report}");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn sttf_blind_and_experiment_use_built_project_dimensions() {
+    let temp = TempRoot::new();
+    let project = temp.0.join("sttf-dimensions-project");
+    write_mesh_project(&project);
+    let project_arg = project.to_string_lossy().into_owned();
+
+    let artifact = temp.0.join("mesh.sttf");
+    let artifact_arg = artifact.to_string_lossy().into_owned();
+    let built = shadertoy(&["build", "--project", &project_arg, "-o", &artifact_arg]);
+    assert!(built.status.success(), "{built:?}");
+
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&artifact).expect("read STTF")).expect("parse STTF");
+    assert_eq!(document["metadata"]["RenderWidth"], "8");
+    assert_eq!(document["metadata"]["RenderHeight"], "8");
+    assert_eq!(document["metadata"]["RenderFps"], "60");
+
+    let project_source = format!("project:{project_arg}");
+    let blind_dir = temp.0.join("blind");
+    let blind_dir_arg = blind_dir.to_string_lossy().into_owned();
+    let blinded = shadertoy(&[
+        "--json",
+        "blind",
+        "create",
+        &project_source,
+        &artifact_arg,
+        "--frames",
+        "0",
+        "--output-dir",
+        &blind_dir_arg,
+    ]);
+    assert!(blinded.status.success(), "{blinded:?}");
+    let blind_report: serde_json::Value =
+        serde_json::from_slice(&blinded.stdout).expect("parse blind report");
+    assert_eq!(blind_report["width"], 8);
+    assert_eq!(blind_report["height"], 8);
+
+    let experiment_dir = temp.0.join("experiment");
+    let experiment_dir_arg = experiment_dir.to_string_lossy().into_owned();
+    let experiment = shadertoy(&[
+        "--json",
+        "experiment",
+        "--baseline",
+        &project_source,
+        "--candidate",
+        &artifact_arg,
+        "--frames",
+        "0",
+        "--profile-samples",
+        "0",
+        "--output-dir",
+        &experiment_dir_arg,
+    ]);
+    assert!(experiment.status.success(), "{experiment:?}");
+    let experiment_report: serde_json::Value =
+        serde_json::from_slice(&experiment.stdout).expect("parse experiment report");
+    assert_eq!(experiment_report["ok"], true, "{experiment_report}");
+}

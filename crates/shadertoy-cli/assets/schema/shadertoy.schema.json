@@ -682,6 +682,10 @@
         "name": {
           "type": "string"
         },
+        "output": {
+          "description": "Render-target index or named output such as \"depth\".",
+          "$ref": "#/$defs/PassOutput"
+        },
         "pass": {
           "type": [
             "string",

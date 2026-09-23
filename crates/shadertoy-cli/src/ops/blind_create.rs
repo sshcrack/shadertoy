@@ -470,9 +470,10 @@ fn render_sttf_frames(
     fps: Option<f32>,
     set_uniforms: &[String],
 ) -> Result<Vec<RgbImage>> {
-    let width = width.unwrap_or(1280);
-    let height = height.unwrap_or(720);
-    let fps = fps.unwrap_or(60.0);
+    let (default_width, default_height, default_fps) = sttf_render_defaults(path)?;
+    let width = width.unwrap_or(default_width);
+    let height = height.unwrap_or(default_height);
+    let fps = fps.unwrap_or(default_fps);
     validate_dimensions(width, height)?;
     validate_fps(fps)?;
     let context = HeadlessContext::new(64, 64)
@@ -500,6 +501,44 @@ fn render_sttf_frames(
         }
     }
     Ok(images)
+}
+
+fn sttf_render_defaults(path: &Path) -> Result<(u32, u32, f32)> {
+    let document: serde_json::Value = serde_json::from_slice(
+        &fs::read(path).with_context(|| format!("failed to read STTF build {}", path.display()))?,
+    )
+    .with_context(|| format!("failed to parse STTF build {}", path.display()))?;
+    let metadata = document
+        .get("metadata")
+        .and_then(serde_json::Value::as_object)
+        .context("STTF build metadata must be an object")?;
+
+    let parse_u32 = |key: &str, fallback: u32| -> Result<u32> {
+        let Some(value) = metadata.get(key) else {
+            return Ok(fallback);
+        };
+        let text = value
+            .as_str()
+            .with_context(|| format!("STTF metadata '{key}' must be a string"))?;
+        text.parse::<u32>()
+            .with_context(|| format!("invalid STTF metadata '{key}' value '{text}'"))
+    };
+    let parse_f32 = |key: &str, fallback: f32| -> Result<f32> {
+        let Some(value) = metadata.get(key) else {
+            return Ok(fallback);
+        };
+        let text = value
+            .as_str()
+            .with_context(|| format!("STTF metadata '{key}' must be a string"))?;
+        text.parse::<f32>()
+            .with_context(|| format!("invalid STTF metadata '{key}' value '{text}'"))
+    };
+
+    Ok((
+        parse_u32("RenderWidth", 1280)?,
+        parse_u32("RenderHeight", 720)?,
+        parse_f32("RenderFps", 60.0)?,
+    ))
 }
 
 fn apply_sttf_uniform_overrides(

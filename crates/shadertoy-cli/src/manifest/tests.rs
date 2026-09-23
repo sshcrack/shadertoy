@@ -339,3 +339,53 @@ mesh_size = [65, 65]
         .expect_err("mesh_size on a buffer pass must be rejected");
     assert!(error.to_string().contains("mesh_size"), "{error}");
 }
+
+#[test]
+fn test_named_depth_output_requires_depth_enabled_mesh() {
+    let valid = r#"format = 1
+[project]
+name = "mesh-depth-test"
+
+[[pass]]
+name = "surface"
+kind = "mesh"
+source = "shaders/surface.frag"
+vertex = "shaders/surface.vert"
+
+[pass.mesh]
+size = [3, 3]
+instances = 1
+depth = true
+
+[[pass]]
+name = "image"
+kind = "image"
+source = "shaders/image.frag"
+
+[[pass.input]]
+channel = 0
+source = "surface"
+
+[[test]]
+name = "surface-depth"
+pass = "surface"
+output = "depth"
+frame = 0
+assert_no_nan = true
+"#;
+
+    let manifest: Manifest = toml::from_str(valid).expect("depth test should parse");
+    manifest
+        .validate_structure()
+        .expect("depth-enabled mesh test should validate");
+
+    let invalid = valid.replace("depth = true", "depth = false");
+    let manifest: Manifest = toml::from_str(&invalid).expect("invalid depth test should parse");
+    let error = manifest
+        .validate_structure()
+        .expect_err("depth test on depth-disabled mesh must fail");
+    assert!(
+        error.to_string().contains("no readable depth output"),
+        "{error}"
+    );
+}

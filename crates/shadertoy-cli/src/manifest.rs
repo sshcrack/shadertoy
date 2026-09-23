@@ -145,6 +145,9 @@ pub struct TestCase {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pass: Option<String>,
+    /// Render-target index or named output such as "depth".
+    #[serde(default, skip_serializing_if = "PassOutput::is_primary")]
+    pub output: PassOutput,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frame: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1116,6 +1119,43 @@ impl Manifest {
                     test.name,
                     pass
                 );
+            }
+            let selected_test_pass = test
+                .pass
+                .as_deref()
+                .map(|name| {
+                    self.passes
+                        .iter()
+                        .find(|candidate| candidate.name == name)
+                        .expect("test pass was validated above")
+                })
+                .unwrap_or_else(|| self.final_pass());
+            match test.output {
+                PassOutput::Index(index) => {
+                    if usize::from(index) > selected_test_pass.extra_outputs.len() {
+                        bail!(
+                            "test '{}' selects output {} from pass '{}', which exposes color outputs 0..{}",
+                            test.name,
+                            index,
+                            selected_test_pass.name,
+                            selected_test_pass.extra_outputs.len()
+                        );
+                    }
+                }
+                PassOutput::Named(NamedPassOutput::Depth) => {
+                    if selected_test_pass.kind != PassKind::Mesh
+                        || !selected_test_pass
+                            .mesh
+                            .as_ref()
+                            .is_some_and(|mesh| mesh.depth)
+                    {
+                        bail!(
+                            "test '{}' selects depth from pass '{}', which has no readable depth output",
+                            test.name,
+                            selected_test_pass.name
+                        );
+                    }
+                }
             }
             if !test.raw_tolerance.is_finite() || test.raw_tolerance < 0.0 {
                 bail!(

@@ -21,8 +21,9 @@ A PNG reference keeps the original RMSE workflow:
   reference = "tests/frame-120.png"
   tolerance = 0.002
 
-Buffer/compute tests can assert finite data, determinism, and output-resolution
-independence:
+Buffer/compute/mesh tests can assert finite data, determinism, and output-resolution
+independence. Select MRTs by numeric index or a mesh's named depth output with
+`output = "depth"`:
 
   [[test]]
   name = "fft-grid"
@@ -34,6 +35,22 @@ independence:
   assert_deterministic = true
   assert_resolution_independent = true
   raw_tolerance = 0.0
+
+
+
+A depth-enabled mesh can target its raw 0..1 window-depth output directly:
+
+  [[test]]
+  name = "surface-depth"
+  pass = "surface"
+  output = "depth"
+  frame = 0
+  assert_no_nan = true
+  assert_no_inf = true
+  assert_deterministic = true
+
+The same named selector is available for inspection with
+`shadertoy inspect buffer surface --pass-output depth`.
 
 Compare two uniform configurations without maintaining a PNG fixture:
 

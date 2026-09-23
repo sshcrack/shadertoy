@@ -17,7 +17,8 @@ A trace contains:
 - state.ststate with persistent buffer and SSBO contents;
 - trace.json with resolved manifest/configuration, source/asset hashes, graph
   diagnostics, dependency/synchronization metadata, and GPU pass timings;
-- optional per-pass PNG and RGBA32F output snapshots.
+- optional per-pass PNG and RGBA32F output snapshots, including
+  `PASS-output-depth.*` for depth-enabled mesh passes.
 
 Inspect and integrity-check every recorded artifact:
 

@@ -337,7 +337,7 @@ static void checkShaderCompileError(const GLuint shader, const std::string_view 
     GLint success;
     std::vector<GLchar> buffer;
     GLint size;
-    if(type != "PROGRAM") {
+    if(!type.ends_with("PROGRAM")) {
         glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
         if(!success) {
             glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &size);
@@ -1063,19 +1063,28 @@ public:
     [[nodiscard]] bool hasOffscreenTarget() const noexcept {
         return !mBuffers.empty() && mBuffers.front().t1 != nullptr;
     }
+    [[nodiscard]] uint32_t resolveReadOutput(const uint32_t output) const {
+        if(output != std::numeric_limits<uint32_t>::max())
+            return output;
+        if(mType != NodeType::Mesh || !mMesh || !mMesh->depth)
+            throw Error("Pass has no readable mesh depth output");
+        return static_cast<uint32_t>(1 + mExtraFormats.size());
+    }
     [[nodiscard]] std::vector<uint8_t> readRgb(const uint32_t output = 0) {
         if(mType != NodeType::Image && mType != NodeType::Compute && mType != NodeType::Mesh)
             throw Error("Only image/buffer/compute/mesh passes can be read as RGB");
-        if(output >= mBuffers.size() || !mBuffers[output].t1)
+        const auto resolvedOutput = resolveReadOutput(output);
+        if(resolvedOutput >= mBuffers.size() || !mBuffers[resolvedOutput].t1)
             throw Error("Pass render-target index is out of range or has no offscreen state");
-        return mBuffers[output].t1->readRgb();
+        return mBuffers[resolvedOutput].t1->readRgb();
     }
     [[nodiscard]] std::vector<float> readRgba32f(const uint32_t output = 0) {
         if(mType != NodeType::Image && mType != NodeType::Compute && mType != NodeType::Mesh)
             throw Error("Only image/buffer/compute/mesh passes can be snapshotted as RGBA32F");
-        if(output >= mBuffers.size() || !mBuffers[output].t1)
+        const auto resolvedOutput = resolveReadOutput(output);
+        if(resolvedOutput >= mBuffers.size() || !mBuffers[resolvedOutput].t1)
             throw Error("Pass render-target index is out of range or has no offscreen state");
-        return mBuffers[output].t1->readRgba32f();
+        return mBuffers[resolvedOutput].t1->readRgba32f();
     }
     void overrideRgba8(const uint32_t width, const uint32_t height, const uint8_t* data) {
         if(mType != NodeType::Image && mType != NodeType::Compute && mType != NodeType::Mesh)
