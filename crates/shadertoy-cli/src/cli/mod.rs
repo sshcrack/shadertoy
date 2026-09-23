@@ -45,7 +45,7 @@ enum Command {
     Graph(GraphArgs),
     /// Build the project into an STTF artifact.
     Build(BuildArgs),
-    /// Deterministically render the final image or a named 2D buffer/compute pass.
+    /// Deterministically render the final image or a named 2D buffer/compute/mesh pass.
     Render(RenderArgs),
     /// Render multiple deterministic frames in one runtime, optionally as a contact sheet.
     RenderFrames(RenderFramesArgs),
@@ -174,6 +174,9 @@ struct RenderArgs {
     /// Render/snapshot a named pass instead of the final Image pass.
     #[arg(long)]
     pass: Option<String>,
+    /// Overlay a depth-tested wireframe for the named mesh pass.
+    #[arg(long, value_name = "PASS")]
+    wireframe: Option<String>,
     #[arg(long)]
     width: Option<u32>,
     #[arg(long)]
@@ -217,6 +220,9 @@ struct RenderFramesArgs {
     /// Render/snapshot a named pass instead of the final Image pass.
     #[arg(long)]
     pass: Option<String>,
+    /// Overlay a depth-tested wireframe for the named mesh pass.
+    #[arg(long, value_name = "PASS")]
+    wireframe: Option<String>,
     #[arg(long)]
     width: Option<u32>,
     #[arg(long)]
@@ -341,7 +347,7 @@ struct SweepArgs {
     /// Contact-sheet column count. Defaults to a near-square layout.
     #[arg(long)]
     columns: Option<u32>,
-    /// Render/snapshot a named 2D buffer/compute pass instead of the final Image pass.
+    /// Render/snapshot a named 2D buffer/compute/mesh pass instead of the final Image pass.
     #[arg(long)]
     pass: Option<String>,
     #[arg(long)]
@@ -577,6 +583,9 @@ struct PreviewArgs {
     /// Reset time/buffer state on every successful hot reload.
     #[arg(long)]
     reset_on_reload: bool,
+    /// Overlay a depth-tested wireframe for the named mesh pass.
+    #[arg(long, value_name = "PASS")]
+    wireframe: Option<String>,
     /// Record shader-affecting preview input and exact rendered frame/time markers.
     #[arg(long, value_name = "PATH")]
     record: Option<PathBuf>,
@@ -601,7 +610,7 @@ enum InspectCommand {
     Pass { name: String },
     /// Inspect one pass's iChannel bindings.
     Channels { name: String },
-    /// Render and inspect a 2D buffer/compute pass's floating-point contents.
+    /// Render and inspect a 2D buffer/compute/mesh pass's floating-point contents.
     Buffer(InspectBufferArgs),
     /// Render and inspect a named shader-storage buffer.
     Storage(InspectStorageArgs),
@@ -783,9 +792,9 @@ enum ChannelCommand {
         source: String,
         #[arg(long, value_enum)]
         kind: Option<InputKindArg>,
-        /// Render-target index when the source is a multi-output pass.
-        #[arg(long, default_value_t = 0)]
-        output: u8,
+        /// Render-target index, or "depth" for a depth-enabled mesh pass.
+        #[arg(long, default_value = "0")]
+        output: String,
         #[arg(long)]
         previous: bool,
         #[arg(long, value_enum, default_value_t = FilterArg::Linear)]
@@ -875,6 +884,7 @@ enum TemplateArg {
 enum PassKindArg {
     #[default]
     Buffer,
+    Mesh,
     Cubemap,
     Compute,
     Sound,
@@ -992,6 +1002,7 @@ fn dispatch(command: Command, json_mode: bool) -> Result<Option<Output>> {
             preset: args.preset,
             output: args.output,
             pass: args.pass,
+            wireframe: args.wireframe,
             width: args.width,
             height: args.height,
             fps: args.fps,
@@ -1008,6 +1019,7 @@ fn dispatch(command: Command, json_mode: bool) -> Result<Option<Output>> {
             contact_sheet: args.contact_sheet,
             columns: args.columns,
             pass: args.pass,
+            wireframe: args.wireframe,
             width: args.width,
             height: args.height,
             fps: args.fps,
@@ -1151,6 +1163,7 @@ fn dispatch(command: Command, json_mode: bool) -> Result<Option<Output>> {
                     no_open: args.no_open,
                     token: args.token,
                     preserve_reload_state: !args.reset_on_reload,
+                    wireframe: args.wireframe,
                     record: args.record,
                     transport: args.preview_transport,
                 },
@@ -1243,7 +1256,7 @@ fn dispatch(command: Command, json_mode: bool) -> Result<Option<Output>> {
                     channel,
                     source,
                     kind: kind.map(Into::into),
-                    output,
+                    output: parse_pass_output(&output)?,
                     previous,
                     filter: filter.into(),
                     wrap: wrap.into(),
@@ -1267,6 +1280,18 @@ fn dispatch(command: Command, json_mode: bool) -> Result<Option<Output>> {
         }
     };
     Ok(Some(output))
+}
+
+fn parse_pass_output(value: &str) -> Result<crate::manifest::PassOutput> {
+    if value.eq_ignore_ascii_case("depth") {
+        return Ok(crate::manifest::PassOutput::Named(
+            crate::manifest::NamedPassOutput::Depth,
+        ));
+    }
+    let index = value.parse::<u8>().map_err(|_| {
+        anyhow::anyhow!("pass output must be an integer in 0..255 or 'depth' (got '{value}')")
+    })?;
+    Ok(crate::manifest::PassOutput::Index(index))
 }
 
 fn emit(output: Output, json_mode: bool) {

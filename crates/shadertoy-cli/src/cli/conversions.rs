@@ -15,6 +15,7 @@ impl From<PassKindArg> for PassKind {
     fn from(value: PassKindArg) -> Self {
         match value {
             PassKindArg::Buffer => PassKind::Buffer,
+            PassKindArg::Mesh => PassKind::Mesh,
             PassKindArg::Cubemap => PassKind::Cubemap,
             PassKindArg::Compute => PassKind::Compute,
             PassKindArg::Sound => PassKind::Sound,

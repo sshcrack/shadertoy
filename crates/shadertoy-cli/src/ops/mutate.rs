@@ -45,12 +45,45 @@ pub fn add_pass(
         bail!("pass source is not a file: {}", source_abs.display());
     }
 
+    let mesh_vertex_rel =
+        (kind == PassKind::Mesh).then(|| default_mesh_vertex_source(&loaded, name));
+    let mesh_vertex_abs = mesh_vertex_rel
+        .as_ref()
+        .map(|path| project_write_target(&loaded.root, path))
+        .transpose()?;
+    if let Some(path) = &mesh_vertex_abs
+        && path.exists()
+        && !path.is_file()
+    {
+        bail!("mesh vertex source is not a file: {}", path.display());
+    }
+    let mesh_vertex_text = mesh_vertex_rel
+        .as_ref()
+        .map(|path| {
+            path.to_str()
+                .context("mesh vertex source must be valid UTF-8")
+        })
+        .transpose()?
+        .map(|value| value.replace('\\', "/"));
+    if let Some(vertex) = &mesh_vertex_text {
+        validate_project_relative_path(vertex, "mesh vertex source")?;
+    }
+
     loaded.manifest.passes.insert(
         loaded.manifest.passes.len().saturating_sub(1),
         Pass {
             name: name.to_string(),
             kind,
             source: source_text,
+            vertex: mesh_vertex_text.clone(),
+            mesh: (kind == PassKind::Mesh).then_some(crate::manifest::MeshConfig {
+                topology: crate::manifest::MeshTopology::Grid,
+                size: [33, 33],
+                instances: 1,
+                depth: true,
+                cull: crate::manifest::MeshCull::None,
+                clear: [0.0; 4],
+            }),
             width: if kind == PassKind::Compute {
                 Some(256)
             } else {
@@ -74,16 +107,34 @@ pub fn add_pass(
     loaded.manifest.validate_structure()?;
 
     let created_source = !source_abs.exists();
+    let created_vertex = mesh_vertex_abs.as_ref().is_some_and(|path| !path.exists());
     if created_source {
         if let Some(parent) = source_abs.parent() {
             fs::create_dir_all(parent)?;
         }
         fs::write(&source_abs, pass_stub(kind))?;
     }
+    if let Some(vertex_abs) = &mesh_vertex_abs
+        && created_vertex
+    {
+        if let Some(parent) = vertex_abs.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        if let Err(error) = fs::write(vertex_abs, crate::include_file!("templates/pass/mesh.vert"))
+        {
+            if created_source {
+                let _ = fs::remove_file(&source_abs);
+            }
+            return Err(error).with_context(|| format!("failed to write {}", vertex_abs.display()));
+        }
+    }
 
     if let Err(error) = write_manifest(&loaded.root, &loaded.manifest) {
         if created_source {
             let _ = fs::remove_file(&source_abs);
+        }
+        if created_vertex && let Some(vertex_abs) = &mesh_vertex_abs {
+            let _ = fs::remove_file(vertex_abs);
         }
         return Err(error);
     }
@@ -101,6 +152,7 @@ pub fn add_pass(
             "pass": name,
             "kind": format!("{kind:?}").to_lowercase(),
             "source": source_rel,
+            "vertex": mesh_vertex_rel,
         }),
     })
 }
@@ -159,7 +211,7 @@ pub struct ChannelSetOptions {
     pub channel: u8,
     pub source: String,
     pub kind: Option<crate::manifest::InputKind>,
-    pub output: u8,
+    pub output: crate::manifest::PassOutput,
     pub previous: bool,
     pub filter: crate::manifest::Filter,
     pub wrap: crate::manifest::Wrap,
@@ -194,7 +246,7 @@ pub fn set_channel(project_path: &Path, options: &ChannelSetOptions) -> Result<O
         channel,
         source: source.to_string(),
         kind,
-        output: options.output,
+        output,
         frame: if previous {
             FrameRef::Previous
         } else {
@@ -293,6 +345,29 @@ fn default_pass_source(loaded: &LoadedManifest, name: &str, kind: PassKind) -> P
     unreachable!("unbounded pass-source suffix search must find a free name")
 }
 
+fn default_mesh_vertex_source(loaded: &LoadedManifest, name: &str) -> PathBuf {
+    let base = slug(name);
+    for suffix in 1usize.. {
+        let stem = if suffix == 1 {
+            base.clone()
+        } else {
+            format!("{base}-{suffix}")
+        };
+        let candidate = PathBuf::from(format!("shaders/{stem}.vert"));
+        let serialized = candidate.to_string_lossy();
+        if !loaded
+            .manifest
+            .passes
+            .iter()
+            .filter_map(|pass| pass.vertex.as_deref())
+            .any(|vertex| vertex == serialized)
+        {
+            return candidate;
+        }
+    }
+    unreachable!("unbounded mesh-vertex suffix search must find a free name")
+}
+
 fn project_write_target(root: &Path, relative: &Path) -> Result<PathBuf> {
     let candidate = root.join(relative);
     let canonical_root = fs::canonicalize(root)
@@ -349,7 +424,9 @@ fn slug(value: &str) -> String {
 
 fn pass_stub(kind: PassKind) -> &'static str {
     match kind {
-        PassKind::Buffer | PassKind::Image => crate::include_file!("templates/pass/buffer.frag"),
+        PassKind::Buffer | PassKind::Image | PassKind::Mesh => {
+            crate::include_file!("templates/pass/buffer.frag")
+        }
         PassKind::Cubemap => crate::include_file!("templates/pass/cubemap.frag"),
         PassKind::Compute => crate::include_file!("templates/pass/compute.comp"),
         PassKind::Sound => crate::include_file!("templates/pass/sound.frag"),

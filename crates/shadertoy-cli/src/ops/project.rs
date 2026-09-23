@@ -98,6 +98,25 @@ pub fn check_project(options: &CheckOptions) -> Result<Output> {
     )?;
     let sound_passes = super::sound::check_sound_passes(&context, &loaded)?;
 
+    let mesh_passes = loaded
+        .manifest
+        .passes
+        .iter()
+        .filter_map(|pass| {
+            pass.mesh.as_ref().map(|mesh| {
+                json!({
+                    "name": pass.name,
+                    "grid_size": mesh.size,
+                    "instances": mesh.instances,
+                    "vertices": mesh.vertex_count(),
+                    "triangles": mesh.triangle_count(),
+                    "depth": mesh.depth,
+                    "cull": format!("{:?}", mesh.cull).to_lowercase(),
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+
     let pedantic_failed = options.pedantic && warnings != 0;
     let mut human = format!(
         "{}: {} ({} passes, {} assets",
@@ -133,6 +152,7 @@ pub fn check_project(options: &CheckOptions) -> Result<Output> {
             "assets": loaded.manifest.assets.len(),
             "compiled": true,
             "sound_passes": sound_passes,
+            "mesh_passes": mesh_passes,
             "pedantic": options.pedantic,
             "diagnostics": diagnostics,
             "errors": errors,

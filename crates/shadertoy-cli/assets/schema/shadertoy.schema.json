@@ -142,11 +142,8 @@
           ]
         },
         "output": {
-          "description": "Render-target index when consuming another pass. Output 0 is the primary target.",
-          "type": "integer",
-          "format": "uint8",
-          "maximum": 255,
-          "minimum": 0
+          "description": "Render-target selection when consuming another pass. Output 0 is the\nprimary color target; depth-enabled mesh passes also expose \"depth\".",
+          "$ref": "#/$defs/PassOutput"
         },
         "source": {
           "description": "Pass/asset name, or the reserved names \"keyboard\" and \"music\".",
@@ -177,6 +174,79 @@
         "webcam"
       ]
     },
+    "MeshConfig": {
+      "type": "object",
+      "properties": {
+        "clear": {
+          "type": "array",
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 4,
+          "minItems": 4
+        },
+        "cull": {
+          "$ref": "#/$defs/MeshCull",
+          "default": "none"
+        },
+        "depth": {
+          "type": "boolean",
+          "default": true
+        },
+        "instances": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 1,
+          "minimum": 0
+        },
+        "size": {
+          "description": "Grid vertices per instance.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "topology": {
+          "$ref": "#/$defs/MeshTopology",
+          "default": "grid"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "size"
+      ]
+    },
+    "MeshCull": {
+      "type": "string",
+      "enum": [
+        "none",
+        "back",
+        "front"
+      ]
+    },
+    "MeshTopology": {
+      "type": "string",
+      "enum": [
+        "grid"
+      ]
+    },
+    "NamedPassOutput": {
+      "type": "string",
+      "enum": [
+        "depth"
+      ]
+    },
     "Pass": {
       "type": "object",
       "properties": {
@@ -188,11 +258,11 @@
           }
         },
         "format": {
-          "description": "Floating-point render-target format for buffer/compute outputs.",
+          "description": "Floating-point render-target format for buffer/compute/mesh outputs.",
           "$ref": "#/$defs/RenderFormat"
         },
         "height": {
-          "description": "Optional fixed height for a buffer/compute pass. Must be paired with width.",
+          "description": "Optional fixed height for a buffer/compute/mesh pass. Must be paired with width.",
           "type": [
             "integer",
             "null"
@@ -229,12 +299,23 @@
           "maxItems": 3,
           "minItems": 3
         },
+        "mesh": {
+          "description": "Rasterization configuration for mesh passes.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MeshConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "name": {
           "description": "Unique pass name. Names are used by inspect/render/debug commands.",
           "type": "string"
         },
         "source": {
-          "description": "GLSL source path relative to the project root.",
+          "description": "GLSL fragment source path relative to the project root.",
           "type": "string"
         },
         "storage": {
@@ -244,8 +325,15 @@
             "$ref": "#/$defs/StorageBuffer"
           }
         },
+        "vertex": {
+          "description": "GLSL vertex source for mesh passes.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "width": {
-          "description": "Optional fixed width for a buffer/compute pass. Must be paired with height.",
+          "description": "Optional fixed width for a buffer/compute/mesh pass. Must be paired with height.",
           "type": [
             "integer",
             "null"
@@ -266,9 +354,23 @@
       "enum": [
         "image",
         "buffer",
+        "mesh",
         "cubemap",
         "compute",
         "sound"
+      ]
+    },
+    "PassOutput": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        {
+          "$ref": "#/$defs/NamedPassOutput"
+        }
       ]
     },
     "Preset": {
@@ -326,6 +428,29 @@
           },
           "maxItems": 3,
           "minItems": 3
+        },
+        "mesh_instances": {
+          "description": "Mesh instance-count override.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "mesh_size": {
+          "description": "Mesh grid size override.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "maxItems": 2,
+          "minItems": 2
         },
         "width": {
           "description": "Fixed pass width override. Must be paired with height.",
@@ -478,7 +603,7 @@
           "default": false
         },
         "assert_resolution_independent": {
-          "description": "Require a fixed-size buffer/compute pass to be unchanged by output resolution.",
+          "description": "Require a fixed-size buffer/compute/mesh pass to be unchanged by output resolution.",
           "type": "boolean",
           "default": false
         },

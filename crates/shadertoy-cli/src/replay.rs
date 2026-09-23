@@ -239,6 +239,9 @@ pub fn project_fingerprint(loaded: &LoadedManifest) -> Result<String> {
     for (name, expanded) in expand_all(loaded)? {
         hash.update(name.as_bytes());
         hash.update(expanded.text.as_bytes());
+        if let Some(vertex) = &expanded.vertex_text {
+            hash.update(vertex.as_bytes());
+        }
     }
     for asset in &loaded.manifest.assets {
         hash.update(asset.name.as_bytes());

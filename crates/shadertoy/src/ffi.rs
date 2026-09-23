@@ -23,6 +23,7 @@ pub(crate) fn pass_kind(kind: PassKind) -> sys::st_pass_kind {
     match kind {
         PassKind::Image => sys::ST_PASS_IMAGE,
         PassKind::Buffer => sys::ST_PASS_BUFFER,
+        PassKind::Mesh => sys::ST_PASS_MESH,
         PassKind::Cubemap => sys::ST_PASS_CUBEMAP,
         PassKind::Compute => sys::ST_PASS_COMPUTE,
     }

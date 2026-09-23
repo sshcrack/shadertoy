@@ -6,7 +6,8 @@ use crate::source::{SourceGraph, expand_all};
 use anyhow::{Context, Result, bail};
 use image::ImageReader;
 use shadertoy::{
-    Filter as NativeFilter, InputKind as NativeInputKind, PassKind as NativePassKind, Project,
+    Filter as NativeFilter, InputKind as NativeInputKind, MeshCull as NativeMeshCull,
+    PASS_OUTPUT_DEPTH as NATIVE_DEPTH_OUTPUT, PassKind as NativePassKind, Project,
     RenderFormat as NativeRenderFormat, Wrap as NativeWrap,
 };
 use std::fs;
@@ -119,16 +120,40 @@ pub fn build_native_project_with_sources(
             match pass.kind {
                 PassKind::Image => NativePassKind::Image,
                 PassKind::Buffer => NativePassKind::Buffer,
+                PassKind::Mesh => NativePassKind::Mesh,
                 PassKind::Cubemap => NativePassKind::Cubemap,
                 PassKind::Compute => NativePassKind::Compute,
                 PassKind::Sound => unreachable!("sound passes are lowered separately"),
             },
             source,
         )?;
+        if let Some(mesh) = &pass.mesh {
+            let vertex = sources
+                .get(&pass.name)
+                .and_then(|source| source.vertex_text.as_deref())
+                .expect("validated mesh pass has expanded vertex source");
+            project.configure_mesh(
+                &pass.name,
+                vertex,
+                mesh.size[0],
+                mesh.size[1],
+                mesh.instances,
+                mesh.depth,
+                match mesh.cull {
+                    crate::manifest::MeshCull::None => NativeMeshCull::None,
+                    crate::manifest::MeshCull::Back => NativeMeshCull::Back,
+                    crate::manifest::MeshCull::Front => NativeMeshCull::Front,
+                },
+                mesh.clear,
+            )?;
+        }
         if let (Some(width), Some(height)) = (pass.width, pass.height) {
             project.set_pass_resolution(&pass.name, width, height)?;
         }
-        if matches!(pass.kind, PassKind::Buffer | PassKind::Compute) {
+        if matches!(
+            pass.kind,
+            PassKind::Buffer | PassKind::Compute | PassKind::Mesh
+        ) {
             project.set_pass_format(
                 &pass.name,
                 match pass.format {
@@ -186,7 +211,12 @@ pub fn build_native_project_with_sources(
                     InputKind::Video | InputKind::Webcam => NativeInputKind::Texture,
                 },
                 &input.source,
-                input.output.into(),
+                match input.output {
+                    crate::manifest::PassOutput::Index(index) => u32::from(index),
+                    crate::manifest::PassOutput::Named(crate::manifest::NamedPassOutput::Depth) => {
+                        NATIVE_DEPTH_OUTPUT
+                    }
+                },
                 input.frame == FrameRef::Previous,
                 match input.filter {
                     Filter::Mipmap => NativeFilter::Mipmap,
@@ -207,6 +237,9 @@ pub fn build_native_project_with_sources(
 pub fn ensure_source_files_exist(loaded: &LoadedManifest) -> Result<()> {
     for pass in &loaded.manifest.passes {
         existing_project_file(&loaded.root, &pass.source, "shader source", &pass.name)?;
+        if let Some(vertex) = &pass.vertex {
+            existing_project_file(&loaded.root, vertex, "vertex shader source", &pass.name)?;
+        }
     }
     for asset in &loaded.manifest.assets {
         existing_project_file(&loaded.root, &asset.path, "asset", &asset.name)?;

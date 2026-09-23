@@ -35,7 +35,7 @@ pub fn sweep_project(options: &SweepOptions) -> Result<Output> {
         .find(|pass| pass.name == selected_pass)
         .with_context(|| format!("unknown render pass '{selected_pass}'"))?;
     if matches!(pass.kind, PassKind::Cubemap | PassKind::Sound) {
-        bail!("sweep only supports the final image and 2D buffer/compute passes");
+        bail!("sweep only supports the final image and 2D buffer/compute/mesh passes");
     }
     let (selected_width, selected_height) = loaded.manifest.pass_dimensions(pass, width, height);
 

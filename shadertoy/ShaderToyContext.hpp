@@ -65,6 +65,7 @@ public:
     void restoreStorageBuffer(std::string_view name, const uint8_t* data, uint64_t size);
     void updateTexture(std::string_view name, uint32_t width, uint32_t height, const uint32_t* data);
     void reloadPassSource(std::string_view passName, const std::string& source);
+    void setWireframePass(std::string_view passName, bool enabled);
     void overridePassRgba8(std::string_view passName, uint32_t width, uint32_t height, const uint8_t* data);
     void restorePassRgba32f(std::string_view passName, uint32_t width, uint32_t height, const float* data);
     void setProfilingEnabled(bool enabled);

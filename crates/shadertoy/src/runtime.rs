@@ -378,6 +378,18 @@ impl<'context> Runtime<'context> {
         })
     }
 
+    pub fn set_wireframe_pass(&mut self, pass: &str, enabled: bool) -> Result<()> {
+        let pass = CString::new(pass)?;
+        // SAFETY: runtime handle and C string remain valid across the call.
+        check(unsafe {
+            sys::st_runtime_set_wireframe_pass(
+                self.handle.as_ptr(),
+                pass.as_ptr(),
+                i32::from(enabled),
+            )
+        })
+    }
+
     pub fn reload_pass_source(&mut self, pass: &str, source: &str) -> Result<()> {
         self.context.make_current()?;
         let pass = CString::new(pass)?;

@@ -21,8 +21,14 @@ pub(super) fn load_overrides(
             .iter()
             .find(|pass| pass.name == name)
             .with_context(|| format!("unknown buffer override pass '{name}'"))?;
-        if !matches!(pass.kind, PassKind::Buffer | PassKind::Compute) {
-            bail!("buffer override '{}' is not a 2D buffer/compute pass", name);
+        if !matches!(
+            pass.kind,
+            PassKind::Buffer | PassKind::Compute | PassKind::Mesh
+        ) {
+            bail!(
+                "buffer override '{}' is not a 2D buffer/compute/mesh pass",
+                name
+            );
         }
         let (width, height) = manifest.pass_dimensions(pass, output_width, output_height);
         let image = ImageReader::open(path)

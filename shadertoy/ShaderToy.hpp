@@ -73,6 +73,7 @@ public:
     Result<void> updateTexture(std::string_view name, uint32_t width, uint32_t height,
                                const std::vector<uint32_t>& rgba);
     Result<void> reloadPassSource(std::string_view passName, std::string source);
+    Result<void> setWireframePass(std::string_view passName, bool enabled);
     Result<void> overridePassRgba8(std::string_view passName, uint32_t width, uint32_t height, const std::vector<uint8_t>& rgba);
     Result<void> restorePassRgba32f(std::string_view passName, uint32_t width, uint32_t height, const std::vector<float>& rgba);
     void setProfilingEnabled(bool enabled);

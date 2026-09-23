@@ -320,10 +320,26 @@ pub fn profile_project(options: &ProfileOptions) -> Result<Output> {
             })
             .collect::<Vec<_>>();
 
+        let mesh_stats = loaded
+            .manifest
+            .passes
+            .iter()
+            .find(|pass| pass.name == *name)
+            .and_then(|pass| pass.mesh.as_ref())
+            .map(|mesh| {
+                json!({
+                    "grid_size": mesh.size,
+                    "instances": mesh.instances,
+                    "vertices": mesh.vertex_count(),
+                    "triangles": mesh.triangle_count(),
+                })
+            });
+
         json_passes.push(json!({
             "name": name,
             "width": aggregate.width,
             "height": aggregate.height,
+            "mesh": mesh_stats,
             "samples": attributed_stats.count,
             "raw_samples": aggregate.samples.len(),
             // Compatibility fields remain the legacy completion-attributed interval.
@@ -559,7 +575,10 @@ fn estimated_persistent_buffer_bytes(
 
     let mut bytes = 0u64;
     for pass in &loaded.manifest.passes {
-        if !matches!(pass.kind, PassKind::Buffer | PassKind::Compute) {
+        if !matches!(
+            pass.kind,
+            PassKind::Buffer | PassKind::Compute | PassKind::Mesh
+        ) {
             continue;
         }
         let (width, height) = loaded
@@ -576,7 +595,16 @@ fn estimated_persistent_buffer_bytes(
                 total
                     .checked_add(bytes_per_pixel(format))
                     .context("persistent MRT VRAM estimate overflow")
-            })?;
+            })?
+            .checked_add(
+                if pass.kind == PassKind::Mesh && pass.mesh.as_ref().is_some_and(|mesh| mesh.depth)
+                {
+                    4 // sampleable R32F depth copy
+                } else {
+                    0
+                },
+            )
+            .context("mesh depth-copy VRAM estimate overflow")?;
         let copies = if feedback_sources.contains(pass.name.as_str()) {
             2u64
         } else {
@@ -590,6 +618,30 @@ fn estimated_persistent_buffer_bytes(
         bytes = bytes
             .checked_add(pass_bytes)
             .context("persistent buffer VRAM estimate overflow")?;
+        if let Some(mesh) = &pass.mesh {
+            if mesh.depth {
+                let depth_attachment_bytes = u64::from(width)
+                    .checked_mul(u64::from(height))
+                    .and_then(|value| value.checked_mul(4))
+                    .context("mesh depth attachment VRAM estimate overflow")?;
+                bytes = bytes
+                    .checked_add(depth_attachment_bytes)
+                    .context("persistent buffer VRAM estimate overflow")?;
+            }
+            let vertex_bytes = u64::from(mesh.size[0])
+                .checked_mul(u64::from(mesh.size[1]))
+                .and_then(|value| value.checked_mul(8))
+                .context("mesh vertex-buffer VRAM estimate overflow")?;
+            let index_bytes = u64::from(mesh.size[0] - 1)
+                .checked_mul(u64::from(mesh.size[1] - 1))
+                .and_then(|value| value.checked_mul(6))
+                .and_then(|value| value.checked_mul(4))
+                .context("mesh index-buffer VRAM estimate overflow")?;
+            bytes = bytes
+                .checked_add(vertex_bytes)
+                .and_then(|value| value.checked_add(index_bytes))
+                .context("mesh geometry VRAM estimate overflow")?;
+        }
     }
 
     let mut storage = std::collections::HashMap::new();

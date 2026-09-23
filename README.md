@@ -165,6 +165,8 @@ Compute sources implement mainCompute(ivec2 coord). The host supplies a writable
 
 Buffer and compute passes can also expose up to eight render targets with extra_outputs. Fragment shaders write locations 1..N with normal GLSL layout(location = N) outputs; compute shaders receive iOutput1, iOutput2, and so on. Consumers select a target with output = N on the pass input.
 
+Mesh passes add a user-authored vertex stage while preserving the same pass graph, channel, uniform, SSBO, format, and MRT model. The CLI generates an indexed 0..1 grid and draws it with instancing; the shader owns `gl_Position`, camera math, displacement, and LOD policy. Depth-enabled meshes expose a sampleable named `output = "depth"`, and `render`, `render-frames`, and `preview` accept `--wireframe PASS` for depth-tested geometry review. See [docs/MESH_PASSES.md](docs/MESH_PASSES.md) for the complete contract.
+
 Inputs also expose independent sampler controls. Numerical grids such as FFT stages normally use exact texel sampling:
 
 ~~~toml

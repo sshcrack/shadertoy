@@ -4,7 +4,7 @@ It stores:
   - render dimensions
   - fixed frame rate
   - shader time and iFrame
-  - lossless RGBA32F snapshots of persistent 2D buffer/compute passes
+  - lossless RGBA32F snapshots of persistent 2D buffer/compute/mesh passes
   - each captured buffer's actual dimensions (including fixed-size passes)
   - each captured buffer's render-target format
   - optional named SSBO byte contents (format 4)
@@ -52,8 +52,8 @@ Cubemap limitation
 .ststate captures persistent 2D buffer and compute targets only. Cubemap pass
 faces are not included in state artifacts, and cubemap passes cannot be
 replaced with render --set-buffer or state set. Named-pass PNG snapshots
-likewise support the final Image pass and 2D buffer/compute passes, not cubemap
+likewise support the final Image pass and 2D buffer/compute/mesh passes, not cubemap
 passes.
 
 Use ordinary cubemap assets for fixed cube data, or move debuggable persistent
-state into a 2D buffer/compute pass when capture/override is required.
+state into a 2D buffer/compute/mesh pass when capture/override is required.

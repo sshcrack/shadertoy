@@ -4,6 +4,12 @@ All notable changes to the Rust library and CLI are recorded here.
 
 ## Unreleased
 
+## 2.6.0
+
+- Added first-class `kind = "mesh"` raster passes with user-authored vertex shaders, generated indexed grids, instancing, shared channels/uniforms/SSBOs, culling, depth testing, and existing buffer-style color formats/MRTs.
+- Added sampleable mesh `output = "depth"`, current-frame pass-output mip generation usable from vertex `textureLod`, and `--wireframe PASS` on `render`, `render-frames`, and `preview`.
+- Added mesh geometry statistics to `check --json` and `profile --json`, mesh-density/instance quality-preset overrides, `pass add --kind mesh` scaffolding, plus end-to-end regression coverage for vertex-stage mip sampling, custom-uniform overrides, SSBO writes, depth consumption, and wireframe rendering.
+
 ## 2.5.1
 
 - Added repeatable `--set NAME=VALUE` overrides to `blind create` and `experiment`, applying the same custom-uniform state to every rendered source; experiment profiling now uses the same overrides as its comparison frames.

@@ -107,8 +107,9 @@ void ShaderToyTransmissionFormat::load(const std::string& filePath) {
                         shader->fixedHeight = node.at("height").get<uint32_t>();
                         if(shader->fixedWidth == 0 || shader->fixedHeight == 0)
                             throw Error("Shader fixed resolution must be positive");
-                        if(shader->nodeType != NodeType::Image && shader->nodeType != NodeType::Compute)
-                            throw Error("Fixed resolution is only supported for 2D image/buffer or compute shaders");
+                        if(shader->nodeType != NodeType::Image && shader->nodeType != NodeType::Compute &&
+                           shader->nodeType != NodeType::Mesh)
+                            throw Error("Fixed resolution is only supported for 2D image/buffer, mesh, or compute shaders");
                     }
                     if(shader->nodeType == NodeType::Compute && !hasWidth)
                         throw Error("Compute shaders require a fixed resolution");
@@ -136,6 +137,32 @@ void ShaderToyTransmissionFormat::load(const std::string& filePath) {
                         if(shader->localSizeZ != 1)
                             throw Error("Compute local workgroup Z size must be 1 for the 2D mainCompute entrypoint");
                     }
+                    if(shader->nodeType == NodeType::Mesh) {
+                        const auto& value = node.at("mesh");
+                        MeshConfig mesh;
+                        mesh.vertexSource = value.at("vertexSource").get<std::string>();
+                        const auto& size = value.at("size");
+                        if(!size.is_array() || size.size() != 2)
+                            throw Error("Mesh size must contain exactly two integers");
+                        mesh.width = size.at(0).get<uint32_t>();
+                        mesh.height = size.at(1).get<uint32_t>();
+                        mesh.instances = value.value("instances", 1U);
+                        mesh.depth = value.value("depth", true);
+                        if(value.contains("cull"))
+                            mesh.cull = parseEnum<MeshCull>(value.at("cull"), "mesh cull mode");
+                        if(value.contains("clear")) {
+                            const auto& clear = value.at("clear");
+                            if(!clear.is_array() || clear.size() != 4)
+                                throw Error("Mesh clear must contain exactly four values");
+                            for(uint32_t i = 0; i < 4; ++i)
+                                mesh.clear[i] = clear.at(i).get<float>();
+                        }
+                        if(mesh.vertexSource.empty() || mesh.width < 2 || mesh.height < 2 || mesh.instances == 0)
+                            throw Error("Mesh requires a vertex source, size >= 2x2, and positive instances");
+                        shader->mesh = std::move(mesh);
+                    } else if(node.contains("mesh")) {
+                        throw Error("Mesh configuration is only valid for mesh shaders");
+                    }
                     if(node.contains("storageBuffers")) {
                         std::unordered_set<uint32_t> usedStorageBindings;
                         for(const auto& storage : node.at("storageBuffers")) {
@@ -154,7 +181,10 @@ void ShaderToyTransmissionFormat::load(const std::string& filePath) {
                         for(const auto& format : node.at("extraRenderFormats"))
                             shader->extraRenderFormats.push_back(parseEnum<RenderFormat>(format, "render format"));
                         if(shader->extraRenderFormats.size() > 7)
-                            throw Error("A shader may expose at most 8 render targets");
+                            throw Error("A shader may expose at most 8 color render targets");
+                        if(shader->nodeType == NodeType::Mesh && shader->mesh && shader->mesh->depth &&
+                           shader->extraRenderFormats.size() > 6)
+                            throw Error("A depth-enabled mesh may expose at most 7 color render targets");
                     }
                     nodeValue = std::move(shader);
                     break;
@@ -325,6 +355,19 @@ void ShaderToyTransmissionFormat::save(const std::string& filePath) const {
                         jsonNode["iterations"] = shader.iterations;
                     if(shader.nodeType == NodeType::Compute)
                         jsonNode["localSize"] = { shader.localSizeX, shader.localSizeY, shader.localSizeZ };
+                    if(shader.nodeType == NodeType::Mesh) {
+                        if(!shader.mesh)
+                            throw Error("Cannot save mesh shader without mesh configuration");
+                        const auto& mesh = *shader.mesh;
+                        jsonNode["mesh"] = {
+                            { "vertexSource", mesh.vertexSource },
+                            { "size", { mesh.width, mesh.height } },
+                            { "instances", mesh.instances },
+                            { "depth", mesh.depth },
+                            { "cull", magic_enum::enum_name(mesh.cull) },
+                            { "clear", { mesh.clear[0], mesh.clear[1], mesh.clear[2], mesh.clear[3] } },
+                        };
+                    }
                     if(!shader.storageBuffers.empty()) {
                         auto& buffers = jsonNode["storageBuffers"];
                         for(const auto& storage : shader.storageBuffers) {

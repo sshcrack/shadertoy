@@ -40,6 +40,7 @@ pub use mutate::{ChannelSetOptions, add_pass, remove_channel, remove_pass, set_c
 pub use profile::profile_project;
 pub use project::{build_project, check_project, init_project, new_project};
 pub use regression::test_project;
+pub(crate) use render::apply_wireframe;
 pub use render::{render_frames_project, render_project};
 pub use replay::replay_project;
 pub use sound::render_audio_project;
@@ -72,6 +73,7 @@ pub struct RenderOptions {
     pub preset: Option<String>,
     pub output: Option<PathBuf>,
     pub pass: Option<String>,
+    pub wireframe: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub fps: Option<f32>,
@@ -194,6 +196,7 @@ pub struct RenderFramesOptions {
     pub contact_sheet: Option<PathBuf>,
     pub columns: Option<u32>,
     pub pass: Option<String>,
+    pub wireframe: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub fps: Option<f32>,

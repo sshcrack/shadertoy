@@ -3,7 +3,7 @@ Every pass may bind up to sixteen inputs: iChannel0 through iChannel15.
 An input selects:
   channel = 0..15
   source  = another pass, an asset, "keyboard", "music", or "webcam"
-  output  = pass render-target index, default 0 (pass inputs only)
+  output  = pass render-target index, default 0, or "depth" for a mesh (pass inputs only)
   frame   = "current" or "previous" (pass inputs only; output 0 for previous)
   filter  = "nearest", "linear", or "mipmap"
   wrap    = "clamp" or "repeat"
@@ -35,7 +35,8 @@ The same controls are available when editing a project from the CLI:
   shadertoy channel set image 0 spectrum --output 0 --filter nearest --wrap repeat
 
 For a multi-render-target pass, use --output 1 (or another valid attachment)
-to bind that target without adding another producer pass.
+to bind that target without adding another producer pass. For a depth-enabled
+mesh, --output depth binds its raw 0..1 window-depth texture.
 
 Media channels
 --------------

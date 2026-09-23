@@ -108,7 +108,10 @@ std::unique_ptr<Pipeline> compilePipeline(const ShaderDocument& document) {
 
         const auto& shader = dynamic_cast<const GLSLShader&>(*node);
         if(shader.extraRenderFormats.size() > 7)
-            throw Error("A shader pass may expose at most 8 render targets: " + node->name);
+            throw Error("A shader pass may expose at most 8 color render targets: " + node->name);
+        if(shader.nodeType == NodeType::Mesh && shader.mesh && shader.mesh->depth &&
+           shader.extraRenderFormats.size() > 6)
+            throw Error("A depth-enabled mesh may expose at most 7 color render targets: " + node->name);
         if(shader.iterations == 0 || shader.iterations > 4096)
             throw Error("Shader pass iterations must be in the range 1..4096: " + node->name);
         if(node->getNodeType() != NodeType::Compute && shader.iterations != 1)
@@ -135,7 +138,8 @@ std::unique_ptr<Pipeline> compilePipeline(const ShaderDocument& document) {
         if(node == directRenderNode && shader.renderFormat != RenderFormat::RGBA32F)
             throw Error("The final image pass cannot use an explicit offscreen render format");
 
-        if(node->getNodeType() == NodeType::Image || node->getNodeType() == NodeType::Compute) {
+        if(node->getNodeType() == NodeType::Image || node->getNodeType() == NodeType::Compute ||
+           node->getNodeType() == NodeType::Mesh) {
             if((shader.fixedWidth == 0) != (shader.fixedHeight == 0))
                 throw Error("Shader pass has a partial fixed resolution: " + node->name);
             if(node->getNodeType() == NodeType::Compute && shader.fixedWidth == 0)
@@ -153,9 +157,12 @@ std::unique_ptr<Pipeline> compilePipeline(const ShaderDocument& document) {
                 throw Error("The final image pass cannot expose extra render targets");
             std::vector<DoubleBufferedFB> targets;
             std::vector<RenderFormat> formats;
-            formats.reserve(1 + shader.extraRenderFormats.size());
+            formats.reserve(1 + shader.extraRenderFormats.size() +
+                            (shader.nodeType == NodeType::Mesh && shader.mesh && shader.mesh->depth ? 1U : 0U));
             formats.push_back(shader.renderFormat);
             formats.insert(formats.end(), shader.extraRenderFormats.begin(), shader.extraRenderFormats.end());
+            if(shader.nodeType == NodeType::Mesh && shader.mesh && shader.mesh->depth)
+                formats.push_back(RenderFormat::R32F);
             targets.reserve(formats.size());
             for(const auto format : formats) {
                 if(requiredDoubleBuffer.contains(node)) {
@@ -204,13 +211,21 @@ std::unique_ptr<Pipeline> compilePipeline(const ShaderDocument& document) {
                         const auto texture = textureMap.find(link->start);
                         if(texture == textureMap.end())
                             throw Error("Shader input was not prepared before its consumer");
-                        if(link->sourceOutput >= texture->second.size())
+                        uint32_t sourceOutput = link->sourceOutput;
+                        if(sourceOutput == std::numeric_limits<uint32_t>::max()) {
+                            const auto* sourceShader = dynamic_cast<const GLSLShader*>(link->start);
+                            if(!sourceShader || sourceShader->nodeType != NodeType::Mesh || !sourceShader->mesh ||
+                               !sourceShader->mesh->depth)
+                                throw Error("Shader input source has no readable mesh depth");
+                            sourceOutput = static_cast<uint32_t>(1 + sourceShader->extraRenderFormats.size());
+                        }
+                        if(sourceOutput >= texture->second.size())
                             throw Error("Shader input render-target index is out of range");
                         std::optional<Vec2> size;
                         if(const auto knownSize = textureSizeMap.find(link->start); knownSize != textureSizeMap.end())
                             size = knownSize->second;
                         channels.push_back(
-                            Channel{ link->slot, texture->second[link->sourceOutput], link->filter, link->wrapMode, size });
+                            Channel{ link->slot, texture->second[sourceOutput], link->filter, link->wrapMode, size });
                     }
                 }
 
@@ -240,7 +255,7 @@ std::unique_ptr<Pipeline> compilePipeline(const ShaderDocument& document) {
                     pipeline->addPass(node->name, shader.source, shader.nodeType, targets, std::move(channels), fixedResolution,
                                       node == directRenderNode, shader.renderFormat, shader.extraRenderFormats,
                                       shader.iterations, shader.localSizeX, shader.localSizeY, shader.localSizeZ,
-                                      std::move(storageBuffers));
+                                      std::move(storageBuffers), shader.mesh);
                 } catch(const std::exception& error) {
                     throw Error("Pass '" + node->name + "': " + error.what());
                 }

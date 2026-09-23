@@ -173,7 +173,10 @@ pub(super) fn check_state_roundtrip(
     let mut buffer_dimensions = BTreeMap::new();
     let mut buffer_formats = BTreeMap::new();
     for pass in &loaded.manifest.passes {
-        if !matches!(pass.kind, PassKind::Buffer | PassKind::Compute) {
+        if !matches!(
+            pass.kind,
+            PassKind::Buffer | PassKind::Compute | PassKind::Mesh
+        ) {
             continue;
         }
         let (pass_width, pass_height) = loaded.manifest.pass_dimensions(pass, width, height);

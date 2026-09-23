@@ -2,6 +2,7 @@ Pass kinds:
 
   image    Exactly one final Image pass is required.
   buffer   Offscreen 2D fragment pass. May be consumed by later passes and/or itself.
+  mesh     Offscreen indexed-grid raster pass with a user-authored vertex stage.
   cubemap  Cubemap fragment pass.
   compute  Fixed-size OpenGL 4.3 compute pass with a writable image output.
   sound    ShaderToy mainSound(int,float) pass; rendered offline with render-audio.
@@ -35,18 +36,72 @@ Compute passes always require a fixed resolution:
   local_size = [8, 8, 1]
   iterations = 8
 
-Available 2D target formats are r32f, rg32f, rgba16f, and rgba32f. Buffer
+Available 2D target formats are r32f, rg32f, rgba16f, and rgba32f. Buffer and mesh
 passes default to rgba32f and may use the same format field.
 
 For fixed passes, iResolution uses the pass dimensions and
 iChannelResolution reports the actual dimensions of every input. Changing
 preview/output resolution does not resize or clear fixed pass state.
 
+Mesh passes
+-----------
+
+A mesh pass keeps the normal 2D fragment-pass contract but adds a vertex source
+and host-generated indexed grid:
+
+  [[pass]]
+  name = "ocean-mesh"
+  kind = "mesh"
+  vertex = "shaders/ocean-mesh.vert"
+  source = "shaders/ocean-mesh.frag"
+  format = "rgba16f"
+
+  [pass.mesh]
+  topology = "grid"
+  size = [257, 257]
+  instances = 6
+  depth = true
+  cull = "none"
+  clear = [0.0, 0.0, 0.0, 0.0]
+
+The vertex stage receives a_grid in 0..1, gl_VertexID/gl_InstanceID,
+iMeshSize/iMeshInstances, the normal timing/channel/custom uniforms, and the
+same configured SSBO bindings as the fragment stage. The shader writes
+gl_Position; the CLI supplies no camera or matrices. User varyings pass through
+unchanged.
+
+Use explicit-LOD sampling such as textureLod or texelFetch in vertex shaders.
+A pass input with filter = "mipmap" regenerates the producer's current mip
+chain when the consumer binds it.
+
+When depth = true, the rasterizer uses LESS depth testing and exposes raw
+0..1 window depth as a named pass output:
+
+  [[pass.input]]
+  channel = 3
+  source = "ocean-mesh"
+  kind = "pass"
+  output = "depth"
+  filter = "nearest"
+  wrap = "clamp"
+
+The named depth output is separate from numeric MRT indices. Use
+--wireframe ocean-mesh with render, render-frames, or preview for a flat,
+depth-tested grid overlay. check --json and profile --json report mesh grid,
+instance, vertex, and triangle counts.
+
+Quality presets can override geometry independently from target resolution:
+
+  [preset.low.pass.ocean-mesh]
+  mesh_size = [129, 129]
+  mesh_instances = 4
+
+See docs/MESH_PASSES.md in the repository for the complete mesh contract.
 
 Multiple render targets
 -----------------------
 
-Buffer and compute passes can expose up to eight 2D outputs. format describes
+Buffer, compute, and mesh passes can expose multiple 2D color outputs. format describes
 output 0; extra_outputs appends outputs 1 through 7:
 
   [[pass]]
@@ -93,7 +148,7 @@ or ordinary previous-frame pass feedback.
 Shader storage buffers
 ----------------------
 
-Compute and fragment passes may bind persistent SSBOs by name:
+Compute, fragment, and mesh vertex passes may bind persistent SSBOs by name:
 
   [[pass.storage]]
   binding = 3

@@ -146,8 +146,11 @@ pub fn inspect_buffer(options: &InspectBufferOptions) -> Result<Output> {
         .iter()
         .find(|pass| pass.name == options.pass)
         .with_context(|| format!("unknown pass '{}'", options.pass))?;
-    if !matches!(pass.kind, PassKind::Buffer | PassKind::Compute) {
-        bail!("runtime buffer inspection requires a 2D buffer/compute pass");
+    if !matches!(
+        pass.kind,
+        PassKind::Buffer | PassKind::Compute | PassKind::Mesh
+    ) {
+        bail!("runtime buffer inspection requires a 2D buffer/compute/mesh pass");
     }
     if usize::from(options.output_index) > pass.extra_outputs.len() {
         bail!(

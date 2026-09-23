@@ -173,12 +173,14 @@ fn run_case_inner(
             &test.reference_uniforms,
         )?)
     };
-    let raw_requested = matches!(pass.kind, PassKind::Buffer | PassKind::Compute)
-        && (test.assert_no_nan
-            || test.assert_no_inf
-            || test.mean_range.is_some()
-            || test.assert_deterministic
-            || test.assert_resolution_independent);
+    let raw_requested = matches!(
+        pass.kind,
+        PassKind::Buffer | PassKind::Compute | PassKind::Mesh
+    ) && (test.assert_no_nan
+        || test.assert_no_inf
+        || test.mean_range.is_some()
+        || test.assert_deterministic
+        || test.assert_resolution_independent);
     let profile_requested = test.max_gpu_ms.is_some() || !test.max_pass_gpu_ms.is_empty();
     let storage_names = test
         .storage_assertions

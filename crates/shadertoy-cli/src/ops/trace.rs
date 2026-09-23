@@ -137,7 +137,13 @@ pub fn capture_trace(options: &TraceCaptureOptions) -> Result<Output> {
     let expanded = crate::source::expand_all(&loaded)?;
     let source_sha256 = expanded
         .iter()
-        .map(|(name, source)| (name.clone(), hex_sha256(source.text.as_bytes())))
+        .map(|(name, source)| {
+            let mut bytes = source.text.as_bytes().to_vec();
+            if let Some(vertex) = &source.vertex_text {
+                bytes.extend_from_slice(vertex.as_bytes());
+            }
+            (name.clone(), hex_sha256(&bytes))
+        })
         .collect::<BTreeMap<_, _>>();
     let mut asset_sha256 = BTreeMap::new();
     for asset in &loaded.manifest.assets {
@@ -332,7 +338,10 @@ fn capture_runtime_state(
     let mut buffer_dimensions = BTreeMap::new();
     let mut buffer_formats = BTreeMap::new();
     for pass in &loaded.manifest.passes {
-        if !matches!(pass.kind, PassKind::Buffer | PassKind::Compute) {
+        if !matches!(
+            pass.kind,
+            PassKind::Buffer | PassKind::Compute | PassKind::Mesh
+        ) {
             continue;
         }
         let (pass_width, pass_height) = loaded.manifest.pass_dimensions(pass, width, height);
@@ -390,7 +399,10 @@ fn capture_intermediates(
     let root = trace_dir.join("passes");
     fs::create_dir_all(&root)?;
     for pass in &loaded.manifest.passes {
-        if !matches!(pass.kind, PassKind::Buffer | PassKind::Compute) {
+        if !matches!(
+            pass.kind,
+            PassKind::Buffer | PassKind::Compute | PassKind::Mesh
+        ) {
             continue;
         }
         let (pass_width, pass_height) = loaded.manifest.pass_dimensions(pass, width, height);

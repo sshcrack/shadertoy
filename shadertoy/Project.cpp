@@ -21,6 +21,8 @@ namespace {
             case ProjectPassKind::Image:
             case ProjectPassKind::Buffer:
                 return NodeType::Image;
+            case ProjectPassKind::Mesh:
+                return NodeType::Mesh;
             case ProjectPassKind::CubeMap:
                 return NodeType::CubeMap;
             case ProjectPassKind::Compute:
@@ -106,21 +108,36 @@ Result<ShaderDocument> makeProjectDocument(const ProjectDescription& project) {
             if((pass.width == 0) != (pass.height == 0))
                 throw Error("Pass fixed resolution must specify both width and height: " + pass.name);
             if((pass.width != 0 || pass.height != 0) &&
-               pass.kind != ProjectPassKind::Buffer && pass.kind != ProjectPassKind::Compute)
-                throw Error("Fixed pass resolution is only supported for buffer/compute passes: " + pass.name);
+               pass.kind != ProjectPassKind::Buffer && pass.kind != ProjectPassKind::Compute &&
+               pass.kind != ProjectPassKind::Mesh)
+                throw Error("Fixed pass resolution is only supported for buffer/compute/mesh passes: " + pass.name);
             if(pass.kind == ProjectPassKind::Compute && (pass.width == 0 || pass.height == 0))
                 throw Error("Compute passes require an explicit width and height: " + pass.name);
             if(pass.width > static_cast<uint32_t>(std::numeric_limits<int32_t>::max()) ||
                pass.height > static_cast<uint32_t>(std::numeric_limits<int32_t>::max()))
                 throw Error("Pass fixed resolution exceeds the OpenGL dimension range: " + pass.name);
             if(pass.kind != ProjectPassKind::Buffer && pass.kind != ProjectPassKind::Compute &&
-               pass.renderFormat != RenderFormat::RGBA32F)
-                throw Error("Explicit render formats are only supported for buffer/compute passes: " + pass.name);
+               pass.kind != ProjectPassKind::Mesh && pass.renderFormat != RenderFormat::RGBA32F)
+                throw Error("Explicit render formats are only supported for buffer/compute/mesh passes: " + pass.name);
             if(!pass.extraRenderFormats.empty() && pass.kind != ProjectPassKind::Buffer &&
-               pass.kind != ProjectPassKind::Compute)
-                throw Error("Multiple render targets are only supported for buffer/compute passes: " + pass.name);
+               pass.kind != ProjectPassKind::Compute && pass.kind != ProjectPassKind::Mesh)
+                throw Error("Multiple render targets are only supported for buffer/compute/mesh passes: " + pass.name);
+            if(pass.kind == ProjectPassKind::Mesh) {
+                if(!pass.mesh)
+                    throw Error("Mesh pass is missing mesh configuration: " + pass.name);
+                const auto& mesh = *pass.mesh;
+                if(mesh.vertexSource.empty())
+                    throw Error("Mesh pass vertex source must not be empty: " + pass.name);
+                if(mesh.width < 2 || mesh.height < 2 || mesh.instances == 0)
+                    throw Error("Mesh grid must be at least 2x2 with a positive instance count: " + pass.name);
+            } else if(pass.mesh) {
+                throw Error("Mesh configuration is only valid for mesh passes: " + pass.name);
+            }
             if(pass.extraRenderFormats.size() > 7)
-                throw Error("A pass may expose at most 8 render targets: " + pass.name);
+                throw Error("A pass may expose at most 8 color render targets: " + pass.name);
+            if(pass.kind == ProjectPassKind::Mesh && pass.mesh && pass.mesh->depth &&
+               pass.extraRenderFormats.size() > 6)
+                throw Error("A depth-enabled mesh may expose at most 7 color render targets: " + pass.name);
             if(pass.iterations == 0 || pass.iterations > 4096)
                 throw Error("Pass iterations must be in the range 1..4096: " + pass.name);
             if(pass.kind != ProjectPassKind::Compute && pass.iterations != 1)
@@ -161,6 +178,7 @@ Result<ShaderDocument> makeProjectDocument(const ProjectDescription& project) {
             node->localSizeZ = pass.localSizeZ;
             node->storageBuffers = pass.storageBuffers;
             node->extraRenderFormats = pass.extraRenderFormats;
+            node->mesh = pass.mesh;
             auto* shader = node.get();
             passes.emplace(pass.name, shader);
             sources.emplace(pass.name, shader);
@@ -202,8 +220,14 @@ Result<ShaderDocument> makeProjectDocument(const ProjectDescription& project) {
                             throw Error("Input source is not a shader pass: " + input.source);
                         if(input.kind == ProjectInputKind::Pass) {
                             const auto* sourcePass = dynamic_cast<const GLSLShader*>(producer);
-                            if(!sourcePass || input.sourceOutput > sourcePass->extraRenderFormats.size())
+                            if(!sourcePass)
+                                throw Error("Input source is not a shader pass: " + input.source);
+                            if(input.sourceOutput == ProjectDepthOutput) {
+                                if(sourcePass->nodeType != NodeType::Mesh || !sourcePass->mesh || !sourcePass->mesh->depth)
+                                    throw Error("Input source has no readable depth output: " + input.source);
+                            } else if(input.sourceOutput > sourcePass->extraRenderFormats.size()) {
                                 throw Error("Input source output index is out of range: " + input.source);
+                            }
                         } else if(input.sourceOutput != 0) {
                             throw Error("Only shader pass inputs can select a nonzero output index");
                         }
@@ -243,6 +267,8 @@ Result<ShaderDocument> makeProjectDocument(const ProjectDescription& project) {
                         break;
                 }
 
+                if(input.previousFrame && input.sourceOutput == ProjectDepthOutput)
+                    throw Error("Previous-frame mesh depth inputs are not supported");
                 if(input.previousFrame) {
                     if(input.kind != ProjectInputKind::Pass)
                         throw Error("Only shader pass inputs can use previous-frame semantics");

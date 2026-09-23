@@ -45,7 +45,7 @@ fn built_in_input_kind_requires_canonical_source_name() {
         channel: 0,
         source: "keys".into(),
         kind: Some(InputKind::Keyboard),
-        output: 0,
+        output: PassOutput::Index(0),
         frame: FrameRef::Current,
         filter: Filter::Linear,
         wrap: Wrap::Clamp,
@@ -88,15 +88,15 @@ fn multiple_outputs_validate_only_for_offscreen_2d_passes() {
 fn input_output_index_must_exist_and_previous_feedback_uses_primary_output() {
     let mut manifest = Manifest::multipass("mrt-input");
     manifest.passes[0].extra_outputs = vec![RenderFormat::Rg32f];
-    manifest.passes[1].inputs[0].output = 1;
+    manifest.passes[1].inputs[0].output = PassOutput::Index(1);
     manifest
         .validate_structure()
         .expect("current-frame output 1 should validate");
 
-    manifest.passes[1].inputs[0].output = 2;
+    manifest.passes[1].inputs[0].output = PassOutput::Index(2);
     assert!(manifest.validate_structure().is_err());
 
-    manifest.passes[1].inputs[0].output = 1;
+    manifest.passes[1].inputs[0].output = PassOutput::Index(1);
     manifest.passes[1].inputs[0].frame = FrameRef::Previous;
     assert!(
         manifest.validate_structure().is_err(),
@@ -113,6 +113,8 @@ fn compute_local_size_rejects_multiple_z_lanes() {
             name: "simulation".into(),
             kind: PassKind::Compute,
             source: "shaders/simulation.comp".into(),
+            vertex: None,
+            mesh: None,
             width: Some(1),
             height: Some(1),
             format: RenderFormat::Rgba32f,
@@ -242,7 +244,7 @@ fn manifest_accepts_channel_15_and_rejects_channel_16() {
         channel: 15,
         source: "keyboard".into(),
         kind: Some(InputKind::Keyboard),
-        output: 0,
+        output: PassOutput::Index(0),
         frame: FrameRef::Current,
         filter: Filter::Nearest,
         wrap: Wrap::Clamp,
@@ -256,4 +258,84 @@ fn manifest_accepts_channel_15_and_rejects_channel_16() {
         .validate_structure()
         .expect_err("channel 16 should be rejected");
     assert!(error.to_string().contains("0..=15"), "{error}");
+}
+
+#[test]
+fn mesh_quality_preset_overrides_geometry_density() {
+    let source = r#"format = 1
+[project]
+name = "mesh-preset"
+
+[[pass]]
+name = "surface"
+kind = "mesh"
+source = "shaders/surface.frag"
+vertex = "shaders/surface.vert"
+
+[pass.mesh]
+size = [257, 257]
+instances = 6
+depth = true
+
+[[pass]]
+name = "image"
+kind = "image"
+source = "shaders/image.frag"
+
+[[pass.input]]
+channel = 0
+source = "surface"
+
+[preset.low.pass.surface]
+mesh_size = [65, 65]
+mesh_instances = 3
+"#;
+
+    let mut manifest: Manifest = toml::from_str(source).expect("mesh preset should parse");
+    manifest
+        .validate_structure()
+        .expect("mesh preset should validate");
+    manifest
+        .apply_preset("low")
+        .expect("mesh preset should apply");
+
+    let surface = manifest
+        .passes
+        .iter()
+        .find(|pass| pass.name == "surface")
+        .expect("surface pass");
+    let mesh = surface.mesh.as_ref().expect("mesh config");
+    assert_eq!(mesh.size, [65, 65]);
+    assert_eq!(mesh.instances, 3);
+}
+
+#[test]
+fn mesh_quality_preset_rejects_geometry_controls_on_non_mesh_pass() {
+    let source = r#"format = 1
+[project]
+name = "bad-mesh-preset"
+
+[[pass]]
+name = "buffer"
+kind = "buffer"
+source = "shaders/buffer.frag"
+
+[[pass]]
+name = "image"
+kind = "image"
+source = "shaders/image.frag"
+
+[[pass.input]]
+channel = 0
+source = "buffer"
+
+[preset.low.pass.buffer]
+mesh_size = [65, 65]
+"#;
+
+    let manifest: Manifest = toml::from_str(source).expect("manifest should parse");
+    let error = manifest
+        .validate_structure()
+        .expect_err("mesh_size on a buffer pass must be rejected");
+    assert!(error.to_string().contains("mesh_size"), "{error}");
 }

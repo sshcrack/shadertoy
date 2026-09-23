@@ -14,7 +14,7 @@ keywords = ["shadertoy", "shader", "opengl", "graphics", "rendering"]
 categories = ["graphics", "rendering"]
 
 [dependencies]
-shadertoy-sys = { version = "2.5.1", path = "../.." }
+shadertoy-sys = { version = "2.6.0", path = "../.." }
 thiserror = "2.0"
 
 [lib]

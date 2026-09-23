@@ -102,6 +102,7 @@ pub struct PreviewConfig {
     pub no_open: bool,
     pub token: Option<String>,
     pub preserve_reload_state: bool,
+    pub wireframe: Option<String>,
     pub record: Option<PathBuf>,
     pub transport: PreviewTransport,
 }
@@ -472,6 +473,7 @@ pub fn run(config: PreviewConfig, json_mode: bool) -> Result<()> {
         shared,
         control_rx,
         config.preserve_reload_state,
+        config.wireframe,
         &mut runtime,
         recorder,
     );

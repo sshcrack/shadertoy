@@ -440,6 +440,7 @@ fn render_project_frames(
         contact_sheet: None,
         columns: None,
         pass: None,
+        wireframe: None,
         width,
         height,
         fps,

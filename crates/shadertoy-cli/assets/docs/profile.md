@@ -14,6 +14,8 @@ Normal profiling is non-intrusive at pass boundaries: it does not glFinish after
 every pass. The primary cross-run signal is gpu_frame_timestamp, an independent
 start/end GPU timestamp interval across that natural profiled frame.
 
+Mesh passes additionally report grid size, instance count, total vertices, and total triangles in JSON, so a quality-preset change in geometry density is visible alongside timing. The persistent GPU-state estimate includes mesh color targets, the sampleable depth copy, the depth attachment, and generated grid vertex/index buffers.
+
 Each pass/sample also reports:
 
 - gpu_execution_ms: GPU timestamp interval closed before any host completion wait.

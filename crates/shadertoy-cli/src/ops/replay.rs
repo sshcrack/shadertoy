@@ -135,7 +135,7 @@ pub fn replay_project(options: &ReplayOptions) -> Result<Output> {
         .find(|pass| pass.name == selected)
         .with_context(|| format!("unknown replay pass '{selected}'"))?;
     if matches!(pass.kind, PassKind::Cubemap | PassKind::Sound) {
-        bail!("replay output only supports the final image and 2D buffer/compute passes");
+        bail!("replay output only supports the final image and 2D buffer/compute/mesh passes");
     }
     let image = if pass.name == loaded.manifest.final_pass().name {
         final_image.context("replay did not render its target frame")?
