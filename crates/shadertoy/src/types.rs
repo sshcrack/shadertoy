@@ -1,11 +1,22 @@
 use crate::{Error, Result};
 
+pub const PASS_OUTPUT_DEPTH: u32 = u32::MAX;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PassKind {
     Image,
     Buffer,
+    Mesh,
     Cubemap,
     Compute,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MeshCull {
+    #[default]
+    None,
+    Back,
+    Front,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

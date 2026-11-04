@@ -1,3 +1,4 @@
+mod audio_probe;
 mod blind;
 mod blind_create;
 mod experiment;
@@ -29,6 +30,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub use audio_probe::{AudioProbeOptions, probe_audio};
 pub use blind::{judge_blind, reveal_blind};
 pub use blind_create::create_blind_comparison;
 pub use experiment::{ExperimentOptions, run_experiment};
@@ -40,6 +42,7 @@ pub use mutate::{ChannelSetOptions, add_pass, remove_channel, remove_pass, set_c
 pub use profile::profile_project;
 pub use project::{build_project, check_project, init_project, new_project};
 pub use regression::test_project;
+pub(crate) use render::apply_wireframe;
 pub use render::{render_frames_project, render_project};
 pub use replay::replay_project;
 pub use sound::render_audio_project;
@@ -72,6 +75,7 @@ pub struct RenderOptions {
     pub preset: Option<String>,
     pub output: Option<PathBuf>,
     pub pass: Option<String>,
+    pub wireframe: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub fps: Option<f32>,
@@ -194,6 +198,7 @@ pub struct RenderFramesOptions {
     pub contact_sheet: Option<PathBuf>,
     pub columns: Option<u32>,
     pub pass: Option<String>,
+    pub wireframe: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub fps: Option<f32>,
@@ -214,7 +219,7 @@ pub enum InspectVisualization {
 pub struct InspectBufferOptions {
     pub project: PathBuf,
     pub pass: String,
-    pub output_index: u8,
+    pub pass_output: crate::manifest::PassOutput,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub fps: Option<f32>,

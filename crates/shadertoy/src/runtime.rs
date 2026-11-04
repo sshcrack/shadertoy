@@ -1,6 +1,8 @@
 use crate::ffi::{check, last_error};
 use crate::types::{checked_image_len, zeroed_image_vec};
-use crate::{Error, HeadlessContext, PassProfileSample, PassTiming, Project, Result, RgbImage};
+use crate::{
+    AudioInput, Error, HeadlessContext, PassProfileSample, PassTiming, Project, Result, RgbImage,
+};
 use shadertoy_sys as sys;
 use std::ffi::{CStr, CString};
 use std::marker::PhantomData;
@@ -224,6 +226,49 @@ impl<'context> Runtime<'context> {
         })
     }
 
+    /// Replace the music texture and `iAudio*` values used by subsequent renders.
+    pub fn set_audio_input(&mut self, audio: &AudioInput) -> Result<()> {
+        self.context.make_current()?;
+        let native = sys::st_audio_input {
+            available: i32::from(audio.available),
+            silence: i32::from(audio.silence),
+            sample_rate: audio.sample_rate,
+            spectrum: audio.spectrum.as_ptr(),
+            spectrum_len: audio.spectrum.len(),
+            waveform: audio.waveform.as_ptr(),
+            waveform_len: audio.waveform.len(),
+            loudness: audio.loudness,
+            bass: audio.bass,
+            mid: audio.mid,
+            treble: audio.treble,
+            onset: audio.onset,
+            kick: audio.kick,
+            snare: audio.snare,
+            hihat: audio.hihat,
+            bpm: audio.bpm,
+            beat_phase: audio.beat_phase,
+            beat_confidence: audio.beat_confidence,
+            beat_strength: audio.beat_strength,
+            stereo_width: audio.stereo_width,
+            stereo_balance: audio.stereo_balance,
+            stereo_correlation: audio.stereo_correlation,
+            energy_trend: audio.energy_trend,
+            drop: audio.drop,
+            section_change: audio.section_change,
+            spectral_centroid: audio.spectral_centroid,
+            spectral_flux: audio.spectral_flux,
+        };
+        // SAFETY: runtime handle is valid; spectrum/waveform slices outlive the call and the native side copies them.
+        check(unsafe { sys::st_runtime_set_audio_input(self.handle.as_ptr(), &native) })
+    }
+
+    /// Restore the silent default audio state (`iAudioAvailable = 0`, `iAudioSilence = 1`).
+    pub fn clear_audio_input(&mut self) -> Result<()> {
+        self.context.make_current()?;
+        // SAFETY: runtime handle is valid; a null input is the documented reset.
+        check(unsafe { sys::st_runtime_set_audio_input(self.handle.as_ptr(), std::ptr::null()) })
+    }
+
     pub fn render(&mut self, width: u32, height: u32) -> Result<RgbImage> {
         self.context.make_current()?;
         let mut pixels = zeroed_image_vec::<u8>(width, height, 3)?;
@@ -374,6 +419,18 @@ impl<'context> Runtime<'context> {
                 height,
                 rgba.as_ptr(),
                 rgba.len(),
+            )
+        })
+    }
+
+    pub fn set_wireframe_pass(&mut self, pass: &str, enabled: bool) -> Result<()> {
+        let pass = CString::new(pass)?;
+        // SAFETY: runtime handle and C string remain valid across the call.
+        check(unsafe {
+            sys::st_runtime_set_wireframe_pass(
+                self.handle.as_ptr(),
+                pass.as_ptr(),
+                i32::from(enabled),
             )
         })
     }

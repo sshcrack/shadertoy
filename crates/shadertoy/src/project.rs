@@ -1,6 +1,6 @@
 use crate::ffi::{check, filter_kind, input_kind, last_error, pass_kind, render_format, wrap_kind};
 use crate::types::checked_image_len;
-use crate::{Error, Filter, InputKind, PassKind, RenderFormat, Result, Wrap};
+use crate::{Error, Filter, InputKind, MeshCull, PassKind, RenderFormat, Result, Wrap};
 use shadertoy_sys as sys;
 use std::ffi::CString;
 use std::ptr::NonNull;
@@ -94,6 +94,41 @@ impl Project {
         // SAFETY: project handle is valid and the C string lives across the call.
         check(unsafe {
             sys::st_project_set_compute_local_size(self.handle.as_ptr(), pass.as_ptr(), x, y, z)
+        })?;
+        Ok(self)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn configure_mesh(
+        &mut self,
+        pass: &str,
+        vertex_source: &str,
+        width: u32,
+        height: u32,
+        instances: u32,
+        depth: bool,
+        cull: MeshCull,
+        clear: [f32; 4],
+    ) -> Result<&mut Self> {
+        let pass = CString::new(pass)?;
+        let vertex_source = CString::new(vertex_source)?;
+        let cull = match cull {
+            MeshCull::None => sys::ST_MESH_CULL_NONE,
+            MeshCull::Back => sys::ST_MESH_CULL_BACK,
+            MeshCull::Front => sys::ST_MESH_CULL_FRONT,
+        };
+        check(unsafe {
+            sys::st_project_configure_mesh(
+                self.handle.as_ptr(),
+                pass.as_ptr(),
+                vertex_source.as_ptr(),
+                width,
+                height,
+                instances,
+                i32::from(depth),
+                cull,
+                clear.as_ptr(),
+            )
         })?;
         Ok(self)
     }

@@ -16,8 +16,10 @@
 
 #include "shadertoy/Config.hpp"
 #include "shadertoy/Types.hpp"
+#include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -25,9 +27,20 @@
 SHADERTOY_NAMESPACE_BEGIN
 
 enum class NodeClass { RenderOutput, SoundOutput, GLSLShader, Texture, CubeMap, LastFrame, Keyboard, Music, Volume, Unknown };
-enum class NodeType { Image, CubeMap, Volume, Sound, Compute };
+enum class NodeType { Image, Mesh, CubeMap, Volume, Sound, Compute };
 enum class RenderFormat { R32F, RG32F, RGBA16F, RGBA32F };
 enum class CustomUniformType { Float, Int, Vec2, Vec3, Vec4 };
+enum class MeshCull { None, Back, Front };
+
+struct MeshConfig final {
+    std::string vertexSource;
+    uint32_t width{};
+    uint32_t height{};
+    uint32_t instances{ 1 };
+    bool depth{ true };
+    MeshCull cull{ MeshCull::None };
+    std::array<float, 4> clear{};
+};
 
 struct CustomUniformValue final {
     CustomUniformType type{ CustomUniformType::Float };
@@ -91,6 +104,7 @@ struct GLSLShader final : Node {
     uint32_t localSizeZ{ 1 };
     std::vector<StorageBufferBinding> storageBuffers;
     std::vector<RenderFormat> extraRenderFormats;
+    std::optional<MeshConfig> mesh;
 
     GLSLShader(std::string src, const NodeType type) : source{ std::move(src) }, nodeType{ type } {}
     [[nodiscard]] NodeClass getNodeClass() const noexcept override {

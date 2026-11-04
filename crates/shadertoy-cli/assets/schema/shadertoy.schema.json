@@ -9,6 +9,10 @@
         "$ref": "#/$defs/Asset"
       }
     },
+    "audio": {
+      "description": "Host audio for `music` channels and `iAudio*` uniforms. See `shadertoy docs audio`.",
+      "$ref": "#/$defs/AudioSection"
+    },
     "format": {
       "description": "Project manifest format version. Version 1 is the only supported value.",
       "type": "integer",
@@ -96,6 +100,87 @@
         "video"
       ]
     },
+    "AudioSection": {
+      "description": "Host audio driving `music` channels and the `iAudio*` uniforms during CLI rendering.",
+      "type": "object",
+      "properties": {
+        "bpm": {
+          "description": "Tempo in BPM (40..=240). Synthetic default is 120; for files it overrides the detected tempo.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "gain": {
+          "description": "Linear gain applied to file samples before analysis (default 1).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "loop": {
+          "description": "Loop the file instead of going silent after its end (default false).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "offset": {
+          "description": "Seconds into the audio file that correspond to iTime = 0.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "path": {
+          "description": "Project-relative audio file analysed when source = \"file\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "profile": {
+          "description": "Synthetic analysis profile: balanced (default), bass, percussion, or ambient.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SyntheticProfile"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "description": "Audio source: \"none\" (default), \"synthetic\", or \"file\".",
+          "$ref": "#/$defs/AudioSourceKind",
+          "default": "none"
+        }
+      },
+      "additionalProperties": false
+    },
+    "AudioSourceKind": {
+      "description": "Where the host music analysis (`music` channels and `iAudio*` uniforms) comes from.",
+      "oneOf": [
+        {
+          "description": "Deterministic silence: `iAudioAvailable = 0`, `iAudioSilence = 1`.",
+          "type": "string",
+          "const": "none"
+        },
+        {
+          "description": "Deterministic synthetic beat-driven music analysis.",
+          "type": "string",
+          "const": "synthetic"
+        },
+        {
+          "description": "Frame-accurate analysis of an audio file (WAV natively, other formats via ffmpeg).",
+          "type": "string",
+          "const": "file"
+        }
+      ]
+    },
     "Filter": {
       "type": "string",
       "enum": [
@@ -142,11 +227,8 @@
           ]
         },
         "output": {
-          "description": "Render-target index when consuming another pass. Output 0 is the primary target.",
-          "type": "integer",
-          "format": "uint8",
-          "maximum": 255,
-          "minimum": 0
+          "description": "Render-target selection when consuming another pass. Output 0 is the\nprimary color target; depth-enabled mesh passes also expose \"depth\".",
+          "$ref": "#/$defs/PassOutput"
         },
         "source": {
           "description": "Pass/asset name, or the reserved names \"keyboard\" and \"music\".",
@@ -177,6 +259,79 @@
         "webcam"
       ]
     },
+    "MeshConfig": {
+      "type": "object",
+      "properties": {
+        "clear": {
+          "type": "array",
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 4,
+          "minItems": 4
+        },
+        "cull": {
+          "$ref": "#/$defs/MeshCull",
+          "default": "none"
+        },
+        "depth": {
+          "type": "boolean",
+          "default": true
+        },
+        "instances": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 1,
+          "minimum": 0
+        },
+        "size": {
+          "description": "Grid vertices per instance.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "topology": {
+          "$ref": "#/$defs/MeshTopology",
+          "default": "grid"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "size"
+      ]
+    },
+    "MeshCull": {
+      "type": "string",
+      "enum": [
+        "none",
+        "back",
+        "front"
+      ]
+    },
+    "MeshTopology": {
+      "type": "string",
+      "enum": [
+        "grid"
+      ]
+    },
+    "NamedPassOutput": {
+      "type": "string",
+      "enum": [
+        "depth"
+      ]
+    },
     "Pass": {
       "type": "object",
       "properties": {
@@ -188,11 +343,11 @@
           }
         },
         "format": {
-          "description": "Floating-point render-target format for buffer/compute outputs.",
+          "description": "Floating-point render-target format for buffer/compute/mesh outputs.",
           "$ref": "#/$defs/RenderFormat"
         },
         "height": {
-          "description": "Optional fixed height for a buffer/compute pass. Must be paired with width.",
+          "description": "Optional fixed height for a buffer/compute/mesh pass. Must be paired with width.",
           "type": [
             "integer",
             "null"
@@ -229,12 +384,23 @@
           "maxItems": 3,
           "minItems": 3
         },
+        "mesh": {
+          "description": "Rasterization configuration for mesh passes.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MeshConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "name": {
           "description": "Unique pass name. Names are used by inspect/render/debug commands.",
           "type": "string"
         },
         "source": {
-          "description": "GLSL source path relative to the project root.",
+          "description": "GLSL fragment source path relative to the project root.",
           "type": "string"
         },
         "storage": {
@@ -244,8 +410,15 @@
             "$ref": "#/$defs/StorageBuffer"
           }
         },
+        "vertex": {
+          "description": "GLSL vertex source for mesh passes.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "width": {
-          "description": "Optional fixed width for a buffer/compute pass. Must be paired with height.",
+          "description": "Optional fixed width for a buffer/compute/mesh pass. Must be paired with height.",
           "type": [
             "integer",
             "null"
@@ -266,9 +439,23 @@
       "enum": [
         "image",
         "buffer",
+        "mesh",
         "cubemap",
         "compute",
         "sound"
+      ]
+    },
+    "PassOutput": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        {
+          "$ref": "#/$defs/NamedPassOutput"
+        }
       ]
     },
     "Preset": {
@@ -326,6 +513,29 @@
           },
           "maxItems": 3,
           "minItems": 3
+        },
+        "mesh_instances": {
+          "description": "Mesh instance-count override.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "mesh_size": {
+          "description": "Mesh grid size override.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "maxItems": 2,
+          "minItems": 2
         },
         "width": {
           "description": "Fixed pass width override. Must be paired with height.",
@@ -461,6 +671,16 @@
         "size"
       ]
     },
+    "SyntheticProfile": {
+      "description": "Shape of the synthetic music analysis. Matches the led-matrix preview generator.",
+      "type": "string",
+      "enum": [
+        "balanced",
+        "bass",
+        "percussion",
+        "ambient"
+      ]
+    },
     "TestCase": {
       "type": "object",
       "properties": {
@@ -478,7 +698,7 @@
           "default": false
         },
         "assert_resolution_independent": {
-          "description": "Require a fixed-size buffer/compute pass to be unchanged by output resolution.",
+          "description": "Require a fixed-size buffer/compute/mesh pass to be unchanged by output resolution.",
           "type": "boolean",
           "default": false
         },
@@ -486,6 +706,17 @@
           "description": "Serialize persistent pass/SSBO state, reload it into a fresh runtime, and verify exact round-trip contents.",
           "type": "boolean",
           "default": false
+        },
+        "audio": {
+          "description": "Per-test host audio. Replaces both the manifest [audio] section and `--audio*` flags.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AudioSection"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "frame": {
           "type": [
@@ -556,6 +787,10 @@
         },
         "name": {
           "type": "string"
+        },
+        "output": {
+          "description": "Render-target index or named output such as \"depth\".",
+          "$ref": "#/$defs/PassOutput"
         },
         "pass": {
           "type": [

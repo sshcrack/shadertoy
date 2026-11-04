@@ -73,6 +73,19 @@ int main(void) {
         st_runtime_destroy(runtime);
         return 5;
     }
+    if(st_runtime_set_audio_input(runtime, NULL) != 0) {
+        fputs("resetting audio input to silence was unexpectedly rejected\n", stderr);
+        st_runtime_destroy(runtime);
+        return 14;
+    }
+    st_audio_input bad_audio = { 0 };
+    bad_audio.available = 1;
+    bad_audio.spectrum_len = 4;
+    if(st_runtime_set_audio_input(runtime, &bad_audio) == 0) {
+        fputs("null audio spectrum with non-zero length was unexpectedly accepted\n", stderr);
+        st_runtime_destroy(runtime);
+        return 15;
+    }
     st_runtime_destroy(runtime);
 
     st_project* project = st_project_create("c-api-smoke");

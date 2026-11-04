@@ -3,6 +3,7 @@ use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use crate::audio::AudioSection;
 use crate::uniforms::{UniformDefinition, UniformValue, validate_definitions};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -24,6 +25,9 @@ pub struct Manifest {
     pub render: RenderSection,
     #[serde(default)]
     pub shader: ShaderSection,
+    /// Host audio for `music` channels and `iAudio*` uniforms. See `shadertoy docs audio`.
+    #[serde(default, skip_serializing_if = "AudioSection::is_default")]
+    pub audio: AudioSection,
     #[serde(default, rename = "uniform", skip_serializing_if = "Vec::is_empty")]
     pub uniforms: Vec<UniformDefinition>,
     #[serde(default, rename = "asset", skip_serializing_if = "Vec::is_empty")]
@@ -114,6 +118,12 @@ pub struct PresetPass {
     /// Compute local workgroup override.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_size: Option<[u32; 3]>,
+    /// Mesh grid size override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh_size: Option<[u32; 2]>,
+    /// Mesh instance-count override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh_instances: Option<u32>,
 }
 
 fn default_test_tolerance() -> f32 {
@@ -139,6 +149,9 @@ pub struct TestCase {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pass: Option<String>,
+    /// Render-target index or named output such as "depth".
+    #[serde(default, skip_serializing_if = "PassOutput::is_primary")]
+    pub output: PassOutput,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frame: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -166,7 +179,7 @@ pub struct TestCase {
     /// Re-run every matrix entry from a fresh runtime and require identical output.
     #[serde(default)]
     pub assert_deterministic: bool,
-    /// Require a fixed-size buffer/compute pass to be unchanged by output resolution.
+    /// Require a fixed-size buffer/compute/mesh pass to be unchanged by output resolution.
     #[serde(default)]
     pub assert_resolution_independent: bool,
     /// Absolute tolerance for raw floating-point comparisons.
@@ -196,6 +209,9 @@ pub struct TestCase {
     /// Serialize persistent pass/SSBO state, reload it into a fresh runtime, and verify exact round-trip contents.
     #[serde(default)]
     pub assert_state_roundtrip: bool,
+    /// Per-test host audio. Replaces both the manifest [audio] section and `--audio*` flags.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<AudioSection>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -203,9 +219,61 @@ pub struct TestCase {
 pub enum PassKind {
     Image,
     Buffer,
+    Mesh,
     Cubemap,
     Compute,
     Sound,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MeshTopology {
+    #[default]
+    Grid,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MeshCull {
+    #[default]
+    None,
+    Back,
+    Front,
+}
+
+fn default_mesh_instances() -> u32 {
+    1
+}
+
+fn default_mesh_depth() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MeshConfig {
+    #[serde(default)]
+    pub topology: MeshTopology,
+    /// Grid vertices per instance.
+    pub size: [u32; 2],
+    #[serde(default = "default_mesh_instances")]
+    pub instances: u32,
+    #[serde(default = "default_mesh_depth")]
+    pub depth: bool,
+    #[serde(default)]
+    pub cull: MeshCull,
+    #[serde(default)]
+    pub clear: [f32; 4],
+}
+
+impl MeshConfig {
+    pub fn vertex_count(&self) -> u64 {
+        u64::from(self.size[0]) * u64::from(self.size[1]) * u64::from(self.instances)
+    }
+
+    pub fn triangle_count(&self) -> u64 {
+        u64::from(self.size[0] - 1) * u64::from(self.size[1] - 1) * 2 * u64::from(self.instances)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -230,10 +298,6 @@ fn is_default_render_format(value: &RenderFormat) -> bool {
     *value == RenderFormat::Rgba32f
 }
 
-fn is_zero_u8(value: &u8) -> bool {
-    *value == 0
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct StorageBuffer {
@@ -251,15 +315,21 @@ pub struct Pass {
     /// Unique pass name. Names are used by inspect/render/debug commands.
     pub name: String,
     pub kind: PassKind,
-    /// GLSL source path relative to the project root.
+    /// GLSL fragment source path relative to the project root.
     pub source: String,
-    /// Optional fixed width for a buffer/compute pass. Must be paired with height.
+    /// GLSL vertex source for mesh passes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertex: Option<String>,
+    /// Rasterization configuration for mesh passes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh: Option<MeshConfig>,
+    /// Optional fixed width for a buffer/compute/mesh pass. Must be paired with height.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub width: Option<u32>,
-    /// Optional fixed height for a buffer/compute pass. Must be paired with width.
+    /// Optional fixed height for a buffer/compute/mesh pass. Must be paired with width.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height: Option<u32>,
-    /// Floating-point render-target format for buffer/compute outputs.
+    /// Floating-point render-target format for buffer/compute/mesh outputs.
     #[serde(default, skip_serializing_if = "is_default_render_format")]
     pub format: RenderFormat,
     /// Additional render targets beyond output 0. Indices are 1-based after the primary format.
@@ -292,6 +362,51 @@ pub enum InputKind {
     Music,
     Video,
     Webcam,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum NamedPassOutput {
+    Depth,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum PassOutput {
+    Index(u8),
+    Named(NamedPassOutput),
+}
+
+impl Default for PassOutput {
+    fn default() -> Self {
+        Self::Index(0)
+    }
+}
+
+impl PassOutput {
+    pub fn color_index(self) -> Option<u8> {
+        match self {
+            Self::Index(index) => Some(index),
+            Self::Named(NamedPassOutput::Depth) => None,
+        }
+    }
+
+    pub fn is_primary(&self) -> bool {
+        *self == Self::Index(0)
+    }
+
+    pub fn is_depth(&self) -> bool {
+        *self == Self::Named(NamedPassOutput::Depth)
+    }
+}
+
+impl std::fmt::Display for PassOutput {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Index(index) => index.fmt(formatter),
+            Self::Named(NamedPassOutput::Depth) => formatter.write_str("depth"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -330,9 +445,10 @@ pub struct Input {
     /// Optional explicit source kind. Normally inferred from the source name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<InputKind>,
-    /// Render-target index when consuming another pass. Output 0 is the primary target.
-    #[serde(default, skip_serializing_if = "is_zero_u8")]
-    pub output: u8,
+    /// Render-target selection when consuming another pass. Output 0 is the
+    /// primary color target; depth-enabled mesh passes also expose "depth".
+    #[serde(default, skip_serializing_if = "PassOutput::is_primary")]
+    pub output: PassOutput,
     #[serde(default)]
     pub frame: FrameRef,
     /// Per-input texture interpolation/minification mode.
@@ -369,6 +485,8 @@ pub struct Asset {
 pub struct LoadedManifest {
     pub root: PathBuf,
     pub manifest: Manifest,
+    /// True when `manifest.audio` came from a `[[test]]` case and must ignore `--audio*` flags.
+    pub audio_pinned: bool,
 }
 
 impl Manifest {
@@ -384,12 +502,15 @@ impl Manifest {
             },
             render: RenderSection::default(),
             shader: ShaderSection::default(),
+            audio: AudioSection::default(),
             uniforms: Vec::new(),
             assets: Vec::new(),
             passes: vec![Pass {
                 name: "image".into(),
                 kind: PassKind::Image,
                 source: "shaders/image.frag".into(),
+                vertex: None,
+                mesh: None,
                 width: None,
                 height: None,
                 format: RenderFormat::default(),
@@ -416,6 +537,7 @@ impl Manifest {
             },
             render: RenderSection::default(),
             shader: ShaderSection::default(),
+            audio: AudioSection::default(),
             uniforms: Vec::new(),
             assets: Vec::new(),
             passes: vec![
@@ -423,6 +545,8 @@ impl Manifest {
                     name: "buffer-a".into(),
                     kind: PassKind::Buffer,
                     source: "shaders/buffer-a.frag".into(),
+                    vertex: None,
+                    mesh: None,
                     width: None,
                     height: None,
                     format: RenderFormat::default(),
@@ -434,7 +558,7 @@ impl Manifest {
                         channel: 0,
                         source: "buffer-a".into(),
                         kind: Some(InputKind::Pass),
-                        output: 0,
+                        output: PassOutput::Index(0),
                         frame: FrameRef::Previous,
                         filter: Filter::Linear,
                         wrap: Wrap::Clamp,
@@ -444,6 +568,8 @@ impl Manifest {
                     name: "image".into(),
                     kind: PassKind::Image,
                     source: "shaders/image.frag".into(),
+                    vertex: None,
+                    mesh: None,
                     width: None,
                     height: None,
                     format: RenderFormat::default(),
@@ -455,7 +581,7 @@ impl Manifest {
                         channel: 0,
                         source: "buffer-a".into(),
                         kind: Some(InputKind::Pass),
-                        output: 0,
+                        output: PassOutput::Index(0),
                         frame: FrameRef::Current,
                         filter: Filter::Linear,
                         wrap: Wrap::Clamp,
@@ -497,6 +623,12 @@ impl Manifest {
             validate_project_relative_path(include_dir, "shader.include_dirs entry")?;
         }
         self.validate_presets()?;
+        self.audio.validate("[audio]")?;
+        for test in &self.tests {
+            if let Some(audio) = &test.audio {
+                audio.validate(&format!("test '{}' audio", test.name))?;
+            }
+        }
         validate_definitions(&self.uniforms)?;
         if self.passes.is_empty() {
             bail!("project must contain at least one [[pass]]");
@@ -516,6 +648,51 @@ impl Manifest {
                 &pass.source,
                 &format!("source for pass '{}'", pass.name),
             )?;
+            match (&pass.vertex, &pass.mesh, pass.kind) {
+                (Some(vertex), Some(mesh), PassKind::Mesh) => {
+                    validate_project_relative_path(
+                        vertex,
+                        &format!("vertex source for pass '{}'", pass.name),
+                    )?;
+                    if mesh.size[0] < 2 || mesh.size[1] < 2 {
+                        bail!("mesh pass '{}' grid size must be at least 2x2", pass.name);
+                    }
+                    if mesh.instances == 0 || mesh.instances > i32::MAX as u32 {
+                        bail!(
+                            "mesh pass '{}' instances must be in 1..={}",
+                            pass.name,
+                            i32::MAX
+                        );
+                    }
+                    if mesh.clear.iter().any(|value| !value.is_finite()) {
+                        bail!("mesh pass '{}' clear values must be finite", pass.name);
+                    }
+                    let vertices = u64::from(mesh.size[0]) * u64::from(mesh.size[1]);
+                    let indices = u64::from(mesh.size[0] - 1) * u64::from(mesh.size[1] - 1) * 6;
+                    if vertices > i32::MAX as u64 || indices > i32::MAX as u64 {
+                        bail!("mesh pass '{}' grid exceeds OpenGL draw limits", pass.name);
+                    }
+                }
+                (None, None, PassKind::Mesh) => {
+                    bail!("mesh pass '{}' requires vertex and [pass.mesh]", pass.name);
+                }
+                (None, Some(_), PassKind::Mesh) => {
+                    bail!("mesh pass '{}' requires vertex", pass.name);
+                }
+                (Some(_), None, PassKind::Mesh) => {
+                    bail!("mesh pass '{}' requires [pass.mesh]", pass.name);
+                }
+                (Some(_), _, _) => {
+                    bail!("pass '{}' vertex is only valid for mesh passes", pass.name);
+                }
+                (_, Some(_), _) => {
+                    bail!(
+                        "pass '{}' [pass.mesh] is only valid for mesh passes",
+                        pass.name
+                    );
+                }
+                (None, None, _) => {}
+            }
             if !names.insert(pass.name.as_str()) {
                 bail!("duplicate pass/asset name '{}'", pass.name);
             }
@@ -526,9 +703,12 @@ impl Manifest {
                     }
                 }
                 (Some(width), Some(height)) => {
-                    if pass.kind != PassKind::Buffer && pass.kind != PassKind::Compute {
+                    if !matches!(
+                        pass.kind,
+                        PassKind::Buffer | PassKind::Compute | PassKind::Mesh
+                    ) {
                         bail!(
-                            "fixed width/height are only supported for buffer/compute passes ('{}')",
+                            "fixed width/height are only supported for buffer/compute/mesh passes ('{}')",
                             pass.name
                         );
                     }
@@ -548,24 +728,41 @@ impl Manifest {
                     pass.name
                 ),
             }
-            if !matches!(pass.kind, PassKind::Buffer | PassKind::Compute)
-                && pass.format != RenderFormat::Rgba32f
+            if !matches!(
+                pass.kind,
+                PassKind::Buffer | PassKind::Compute | PassKind::Mesh
+            ) && pass.format != RenderFormat::Rgba32f
             {
                 bail!(
-                    "pass '{}' can only set format on buffer/compute passes",
+                    "pass '{}' can only set format on buffer/compute/mesh passes",
                     pass.name
                 );
             }
             if !pass.extra_outputs.is_empty()
-                && !matches!(pass.kind, PassKind::Buffer | PassKind::Compute)
+                && !matches!(
+                    pass.kind,
+                    PassKind::Buffer | PassKind::Compute | PassKind::Mesh
+                )
             {
                 bail!(
-                    "pass '{}' extra_outputs are only valid for buffer/compute passes",
+                    "pass '{}' extra_outputs are only valid for buffer/compute/mesh passes",
                     pass.name
                 );
             }
             if pass.extra_outputs.len() > 7 {
-                bail!("pass '{}' may expose at most 8 render targets", pass.name);
+                bail!(
+                    "pass '{}' may expose at most 8 color render targets",
+                    pass.name
+                );
+            }
+            if pass.kind == PassKind::Mesh
+                && pass.mesh.as_ref().is_some_and(|mesh| mesh.depth)
+                && pass.extra_outputs.len() > 6
+            {
+                bail!(
+                    "depth-enabled mesh pass '{}' may expose at most 7 color render targets",
+                    pass.name
+                );
             }
             if pass.iterations == 0 || pass.iterations > 4096 {
                 bail!("pass '{}' iterations must be in 1..=4096", pass.name);
@@ -686,7 +883,7 @@ impl Manifest {
                     );
                 }
                 let kind = self.infer_input_kind(input)?;
-                if kind != InputKind::Pass && input.output != 0 {
+                if kind != InputKind::Pass && !input.output.is_primary() {
                     bail!(
                         "pass '{}' channel {} selects output {} on a non-pass input",
                         pass.name,
@@ -701,7 +898,7 @@ impl Manifest {
                         input.channel
                     );
                 }
-                if input.frame == FrameRef::Previous && input.output != 0 {
+                if input.frame == FrameRef::Previous && !input.output.is_primary() {
                     bail!(
                         "pass '{}' channel {} uses previous-frame feedback from output {}; only output 0 is resumable",
                         pass.name,
@@ -734,7 +931,20 @@ impl Manifest {
                         .iter()
                         .find(|candidate| candidate.name == input.source)
                         .expect("pass kind map and pass list stay in sync");
-                    if usize::from(input.output) > source_pass.extra_outputs.len() {
+                    if input.output.is_depth() {
+                        if source_pass.kind != PassKind::Mesh
+                            || !source_pass.mesh.as_ref().is_some_and(|mesh| mesh.depth)
+                        {
+                            bail!(
+                                "pass '{}' channel {} selects depth from '{}', which has no readable depth output",
+                                pass.name,
+                                input.channel,
+                                input.source
+                            );
+                        }
+                    } else if usize::from(input.output.color_index().expect("non-depth output"))
+                        > source_pass.extra_outputs.len()
+                    {
                         bail!(
                             "pass '{}' channel {} selects output {} from '{}', which exposes outputs 0..{}",
                             pass.name,
@@ -927,6 +1137,43 @@ impl Manifest {
                     pass
                 );
             }
+            let selected_test_pass = test
+                .pass
+                .as_deref()
+                .map(|name| {
+                    self.passes
+                        .iter()
+                        .find(|candidate| candidate.name == name)
+                        .expect("test pass was validated above")
+                })
+                .unwrap_or_else(|| self.final_pass());
+            match test.output {
+                PassOutput::Index(index) => {
+                    if usize::from(index) > selected_test_pass.extra_outputs.len() {
+                        bail!(
+                            "test '{}' selects output {} from pass '{}', which exposes color outputs 0..{}",
+                            test.name,
+                            index,
+                            selected_test_pass.name,
+                            selected_test_pass.extra_outputs.len()
+                        );
+                    }
+                }
+                PassOutput::Named(NamedPassOutput::Depth) => {
+                    if selected_test_pass.kind != PassKind::Mesh
+                        || !selected_test_pass
+                            .mesh
+                            .as_ref()
+                            .is_some_and(|mesh| mesh.depth)
+                    {
+                        bail!(
+                            "test '{}' selects depth from pass '{}', which has no readable depth output",
+                            test.name,
+                            selected_test_pass.name
+                        );
+                    }
+                }
+            }
             if !test.raw_tolerance.is_finite() || test.raw_tolerance < 0.0 {
                 bail!(
                     "test '{}' raw_tolerance must be finite and non-negative",
@@ -950,12 +1197,14 @@ impl Manifest {
                             .expect("test pass was validated above")
                     })
                     .unwrap_or_else(|| self.final_pass());
-                if !matches!(selected.kind, PassKind::Buffer | PassKind::Compute)
-                    || selected.width.is_none()
+                if !matches!(
+                    selected.kind,
+                    PassKind::Buffer | PassKind::Compute | PassKind::Mesh
+                ) || selected.width.is_none()
                     || selected.height.is_none()
                 {
                     bail!(
-                        "test '{}' resolution independence requires a fixed-size buffer/compute pass",
+                        "test '{}' resolution independence requires a fixed-size buffer/compute/mesh pass",
                         test.name
                     );
                 }
@@ -1123,9 +1372,12 @@ impl Manifest {
                 match (override_.width, override_.height) {
                     (None, None) => {}
                     (Some(width), Some(height)) => {
-                        if !matches!(pass.kind, PassKind::Buffer | PassKind::Compute) {
+                        if !matches!(
+                            pass.kind,
+                            PassKind::Buffer | PassKind::Compute | PassKind::Mesh
+                        ) {
                             bail!(
-                                "preset '{name}' can only override dimensions for buffer/compute pass '{pass_name}'"
+                                "preset '{name}' can only override dimensions for buffer/compute/mesh pass '{pass_name}'"
                             );
                         }
                         if width == 0
@@ -1141,6 +1393,36 @@ impl Manifest {
                     _ => bail!(
                         "preset '{name}' pass '{pass_name}' must specify both width and height or neither"
                     ),
+                }
+                if let Some(size) = override_.mesh_size {
+                    if pass.kind != PassKind::Mesh {
+                        bail!(
+                            "preset '{name}' mesh_size override is only valid for mesh pass '{pass_name}'"
+                        );
+                    }
+                    if size[0] < 2 || size[1] < 2 {
+                        bail!("preset '{name}' mesh_size for '{pass_name}' must be at least 2x2");
+                    }
+                    let vertices = u64::from(size[0]) * u64::from(size[1]);
+                    let indices = u64::from(size[0] - 1) * u64::from(size[1] - 1) * 6;
+                    if vertices > i32::MAX as u64 || indices > i32::MAX as u64 {
+                        bail!(
+                            "preset '{name}' mesh_size for '{pass_name}' exceeds OpenGL draw limits"
+                        );
+                    }
+                }
+                if let Some(instances) = override_.mesh_instances {
+                    if pass.kind != PassKind::Mesh {
+                        bail!(
+                            "preset '{name}' mesh_instances override is only valid for mesh pass '{pass_name}'"
+                        );
+                    }
+                    if instances == 0 || instances > i32::MAX as u32 {
+                        bail!(
+                            "preset '{name}' mesh_instances for '{pass_name}' must be in 1..={}",
+                            i32::MAX
+                        );
+                    }
                 }
                 if let Some(iterations) = override_.iterations {
                     if pass.kind != PassKind::Compute {
@@ -1206,6 +1488,18 @@ impl Manifest {
             }
             if let Some(local_size) = override_.local_size {
                 pass.local_size = Some(local_size);
+            }
+            if let Some(size) = override_.mesh_size {
+                pass.mesh
+                    .as_mut()
+                    .expect("mesh preset override was validated")
+                    .size = size;
+            }
+            if let Some(instances) = override_.mesh_instances {
+                pass.mesh
+                    .as_mut()
+                    .expect("mesh preset override was validated")
+                    .instances = instances;
             }
         }
         Ok(())
@@ -1282,7 +1576,26 @@ impl LoadedManifest {
             manifest.apply_preset(preset)?;
         }
         crate::project_schema::refresh_existing(&root)?;
-        Ok(Self { root, manifest })
+        Ok(Self {
+            root,
+            manifest,
+            audio_pinned: false,
+        })
+    }
+}
+
+impl LoadedManifest {
+    /// Copy whose host audio is fixed to a test case's `audio` section, if it has one.
+    pub fn with_test_audio(&self, test: &TestCase) -> std::borrow::Cow<'_, Self> {
+        match &test.audio {
+            None => std::borrow::Cow::Borrowed(self),
+            Some(audio) => {
+                let mut pinned = self.clone();
+                pinned.manifest.audio = audio.clone();
+                pinned.audio_pinned = true;
+                std::borrow::Cow::Owned(pinned)
+            }
+        }
     }
 }
 

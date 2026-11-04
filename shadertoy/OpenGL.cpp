@@ -108,6 +108,58 @@ void main() {
 
 )";
 
+static const char* const shaderMeshCommonHeader = R"(
+uniform vec3      iResolution;
+uniform float     iTime;
+uniform float     iTimeDelta;
+uniform float     iFrameRate;
+uniform int       iFrame;
+uniform vec4      iMouse;
+uniform vec4      iDate;
+uniform vec3 iChannelResolution[16];
+uniform float iChannelTime[16];
+
+uniform vec4 iMusicBands;
+uniform vec4 iMusicHits;
+uniform vec4 iMusicBeat;
+uniform vec4 iMusicStereo;
+uniform vec4 iMusicStructure;
+uniform vec4 iMusicMeta;
+
+#define iAudioLoudness          (iMusicBands.x)
+#define iAudioBass              (iMusicBands.y)
+#define iAudioMid               (iMusicBands.z)
+#define iAudioTreble            (iMusicBands.w)
+#define iAudioOnset             (iMusicHits.x)
+#define iAudioKick              (iMusicHits.y)
+#define iAudioSnare             (iMusicHits.z)
+#define iAudioHihat             (iMusicHits.w)
+#define iAudioBpm               (iMusicBeat.x)
+#define iAudioBeatPhase         (iMusicBeat.y)
+#define iAudioBeatConfidence    (iMusicBeat.z)
+#define iAudioBeatStrength      (iMusicBeat.w)
+#define iAudioStereoWidth       (iMusicStereo.x)
+#define iAudioStereoBalance     (iMusicStereo.y)
+#define iAudioStereoCorrelation (iMusicStereo.z)
+#define iAudioEnergyTrend       (iMusicStereo.w)
+#define iAudioDrop              (iMusicStructure.x)
+#define iAudioSectionChange     (iMusicStructure.y)
+#define iAudioSpectralCentroid  (iMusicStructure.z)
+#define iAudioSpectralFlux      (iMusicStructure.w)
+#define iAudioAvailable         (iMusicMeta.x)
+#define iAudioSilence           (iMusicMeta.y)
+#define iAudioSampleRate        (iMusicMeta.z)
+
+float sampleAudioSpectrum(sampler2D channel, float x) {
+    return texture(channel, vec2(clamp(x, 0.0, 1.0), 0.25)).r;
+}
+float sampleAudioWaveform(sampler2D channel, float x) {
+    return texture(channel, vec2(clamp(x, 0.0, 1.0), 0.75)).r * 2.0 - 1.0;
+}
+
+#define char char_
+)";
+
 static const char* const shaderPixelHeader = R"(
 layout (location = 0) in vec2 f_fragCoord;
 #ifdef INTERFACE_SHADERTOY_CUBE_MAP
@@ -285,7 +337,7 @@ static void checkShaderCompileError(const GLuint shader, const std::string_view 
     GLint success;
     std::vector<GLchar> buffer;
     GLint size;
-    if(type != "PROGRAM") {
+    if(!type.ends_with("PROGRAM")) {
         glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
         if(!success) {
             glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &size);
@@ -506,6 +558,23 @@ class RenderPass final {
     uint32_t mLocalSizeY{ 8 };
     uint32_t mLocalSizeZ{ 1 };
     std::vector<std::pair<uint32_t, BufferId>> mStorageBuffers;
+    std::optional<MeshConfig> mMesh;
+    GLuint mMeshVAO{};
+    GLuint mMeshVBO{};
+    GLuint mMeshEBO{};
+    GLuint mMeshDepthRBO{};
+    GLsizei mMeshIndexCount{};
+    uint32_t mMeshDepthWidth{};
+    uint32_t mMeshDepthHeight{};
+    GLint mLocationMeshSize{ -1 };
+    GLint mLocationMeshInstances{ -1 };
+    GLint mLocationMeshWireframe{ -1 };
+    GLuint mMeshWireframeFBO{};
+    GLuint mMeshWireframeTexture{};
+    GLuint mMeshCompositeProgram{};
+    uint32_t mMeshWireframeWidth{};
+    uint32_t mMeshWireframeHeight{};
+    bool mWireframe{};
     uint32_t mLastWidth{};
     uint32_t mLastHeight{};
 
@@ -586,6 +655,77 @@ class RenderPass final {
         if(!mStorageBuffers.empty() && !GLAD_GL_VERSION_4_3)
             throw Error("Shader storage buffers require OpenGL 4.3 or newer");
         const auto* graphicsVersion = mStorageBuffers.empty() ? shaderVersionDirective : computeShaderVersionDirective;
+
+        if(mType == NodeType::Mesh) {
+            if(!mMesh)
+                throw Error("Mesh pass is missing mesh configuration");
+            std::string vertexSrc = graphicsVersion;
+            vertexSrc += "layout(location = 0) in vec2 a_grid;\n";
+            vertexSrc += "uniform ivec2 iMeshSize;\n";
+            vertexSrc += "uniform int iMeshInstances;\n";
+            vertexSrc += shaderMeshCommonHeader;
+            for(const auto& channel : mChannels) {
+                vertexSrc += "uniform sampler";
+                vertexSrc += channel.tex.type == TexType::CubeMap ? "Cube" : channel.tex.type == TexType::Tex2D ? "2D" : "3D";
+                vertexSrc += " iChannel" + std::to_string(channel.slot) + ";\n";
+            }
+            vertexSrc += "#line 1\n";
+            vertexSrc += mMesh->vertexSource;
+
+            std::string pixelSrc = graphicsVersion;
+            pixelSrc += "layout(location = 0) out vec4 out_frag_color;\n";
+            pixelSrc += "uniform int iMeshWireframe;\n";
+            pixelSrc += shaderMeshCommonHeader;
+            for(const auto& channel : mChannels) {
+                pixelSrc += "uniform sampler";
+                pixelSrc += channel.tex.type == TexType::CubeMap ? "Cube" : channel.tex.type == TexType::Tex2D ? "2D" : "3D";
+                pixelSrc += " iChannel" + std::to_string(channel.slot) + ";\n";
+            }
+            if(mMesh->depth) {
+                pixelSrc += "layout(location = " + std::to_string(1 + mExtraFormats.size()) +
+                    ") out float out_mesh_depth;\n";
+            }
+            pixelSrc += "#line 1\n";
+            pixelSrc += src;
+            pixelSrc += R"(
+void main() {
+    vec4 output_color = vec4(1e20f);
+    if(iMeshWireframe != 0) {
+        output_color = vec4(1.0, 0.0, 1.0, 1.0);
+    } else {
+        mainImage(output_color, gl_FragCoord.xy);
+    }
+    out_frag_color = output_color;
+)";
+            if(mMesh->depth)
+                pixelSrc += "    if(iMeshWireframe == 0) out_mesh_depth = gl_FragCoord.z;\n";
+            pixelSrc += "}\n";
+
+            const auto* vertexData = vertexSrc.c_str();
+            const auto* pixelData = pixelSrc.c_str();
+            const auto shaderVertex = glCreateShader(GL_VERTEX_SHADER);
+            auto vertGuard = scopeExit([&] { glDeleteShader(shaderVertex); });
+            glShaderSource(shaderVertex, 1, &vertexData, nullptr);
+            glCompileShader(shaderVertex);
+            checkShaderCompileError(shaderVertex, "VERTEX");
+
+            const auto shaderPixel = glCreateShader(GL_FRAGMENT_SHADER);
+            auto pixelGuard = scopeExit([&] { glDeleteShader(shaderPixel); });
+            glShaderSource(shaderPixel, 1, &pixelData, nullptr);
+            glCompileShader(shaderPixel);
+            checkShaderCompileError(shaderPixel, "PIXEL");
+
+            const auto program = glCreateProgram();
+            auto programGuard = scopeFail([&] { glDeleteProgram(program); });
+            glAttachShader(program, shaderVertex);
+            auto vertBindGuard = scopeExit([&] { glDetachShader(program, shaderVertex); });
+            glAttachShader(program, shaderPixel);
+            auto pixelBindGuard = scopeExit([&] { glDetachShader(program, shaderPixel); });
+            glLinkProgram(program);
+            checkShaderCompileError(program, "PROGRAM");
+            return program;
+        }
+
         std::string vertexSrc = graphicsVersion;
         std::string pixelSrc = graphicsVersion;
         if(mType == NodeType::CubeMap) {
@@ -633,6 +773,48 @@ class RenderPass final {
         checkShaderCompileError(program, "PROGRAM");
         return program;
     }
+    [[nodiscard]] GLuint compileMeshCompositeProgram() const {
+        const std::string vertexSrc = std::string(shaderVersionDirective) + R"(
+out vec2 v_uv;
+void main() {
+    vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
+    v_uv = p;
+    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}
+)";
+        const std::string pixelSrc = std::string(shaderVersionDirective) + R"(
+in vec2 v_uv;
+layout(location = 0) out vec4 out_color;
+uniform sampler2D u_overlay;
+void main() {
+    out_color = texture(u_overlay, v_uv);
+}
+)";
+        const auto* vertexData = vertexSrc.c_str();
+        const auto* pixelData = pixelSrc.c_str();
+        const auto shaderVertex = glCreateShader(GL_VERTEX_SHADER);
+        auto vertGuard = scopeExit([&] { glDeleteShader(shaderVertex); });
+        glShaderSource(shaderVertex, 1, &vertexData, nullptr);
+        glCompileShader(shaderVertex);
+        checkShaderCompileError(shaderVertex, "MESH-WIREFRAME-VERTEX");
+
+        const auto shaderPixel = glCreateShader(GL_FRAGMENT_SHADER);
+        auto pixelGuard = scopeExit([&] { glDeleteShader(shaderPixel); });
+        glShaderSource(shaderPixel, 1, &pixelData, nullptr);
+        glCompileShader(shaderPixel);
+        checkShaderCompileError(shaderPixel, "MESH-WIREFRAME-PIXEL");
+
+        const auto program = glCreateProgram();
+        auto programGuard = scopeFail([&] { glDeleteProgram(program); });
+        glAttachShader(program, shaderVertex);
+        auto vertBindGuard = scopeExit([&] { glDetachShader(program, shaderVertex); });
+        glAttachShader(program, shaderPixel);
+        auto pixelBindGuard = scopeExit([&] { glDetachShader(program, shaderPixel); });
+        glLinkProgram(program);
+        checkShaderCompileError(program, "MESH-WIREFRAME-PROGRAM");
+        return program;
+    }
+
     void refreshUniformLocations() {
 #define SHADERTOY_GET_UNIFORM_LOCATION(NAME) mLocation##NAME = glGetUniformLocation(mProgram, "i" #NAME)
         SHADERTOY_GET_UNIFORM_LOCATION(Resolution);
@@ -650,6 +832,9 @@ class RenderPass final {
         SHADERTOY_GET_UNIFORM_LOCATION(MusicStructure);
         SHADERTOY_GET_UNIFORM_LOCATION(MusicMeta);
 #undef SHADERTOY_GET_UNIFORM_LOCATION
+        mLocationMeshSize = glGetUniformLocation(mProgram, "iMeshSize");
+        mLocationMeshInstances = glGetUniformLocation(mProgram, "iMeshInstances");
+        mLocationMeshWireframe = glGetUniformLocation(mProgram, "iMeshWireframe");
         for(uint32_t slot = 0; slot < MaxInputChannels; ++slot) {
             const auto suffix = std::to_string(slot);
             mLocationChannel[slot] = glGetUniformLocation(mProgram, ("iChannel" + suffix).c_str());
@@ -664,14 +849,17 @@ public:
                std::vector<Channel> channels, std::optional<Vec2> fixedResolution, const bool clampOutput,
                const RenderFormat format, std::vector<RenderFormat> extraFormats, const uint32_t iterations,
                const uint32_t localSizeX, const uint32_t localSizeY, const uint32_t localSizeZ,
-               std::vector<std::pair<uint32_t, BufferId>> storageBuffers)
+               std::vector<std::pair<uint32_t, BufferId>> storageBuffers, std::optional<MeshConfig> mesh)
         : mName{ std::move(name) }, mBuffers{ std::move(buffer) }, mType{ type }, mChannels{ std::move(channels) },
           mFixedResolution{ fixedResolution }, mClampOutput{ clampOutput }, mFormat{ format },
           mExtraFormats{ std::move(extraFormats) }, mIterations{ iterations }, mLocalSizeX{ localSizeX },
-          mLocalSizeY{ localSizeY }, mLocalSizeZ{ localSizeZ }, mStorageBuffers{ std::move(storageBuffers) } {
-        if(mBuffers.size() != 1 + mExtraFormats.size() && mType != NodeType::CubeMap)
+          mLocalSizeY{ localSizeY }, mLocalSizeZ{ localSizeZ }, mStorageBuffers{ std::move(storageBuffers) },
+          mMesh{ std::move(mesh) } {
+        const auto expectedTargets = 1 + mExtraFormats.size() +
+            (mType == NodeType::Mesh && mMesh && mMesh->depth ? 1U : 0U);
+        if(mBuffers.size() != expectedTargets && mType != NodeType::CubeMap)
             throw Error("Render target count does not match pass output formats");
-        if(mType == NodeType::Image && mBuffers.size() > 1) {
+        if((mType == NodeType::Image && mBuffers.size() > 1) || mType == NodeType::Mesh) {
             GLint maxDrawBuffers = 0;
             GLint maxColorAttachments = 0;
             glGetIntegerv(GL_MAX_DRAW_BUFFERS, &maxDrawBuffers);
@@ -680,6 +868,64 @@ public:
                 throw Error("Pass render-target count exceeds the OpenGL MRT limit");
             glGenFramebuffers(1, &mMrtFBO);
         }
+        if(mType == NodeType::Mesh) {
+            if(!mMesh)
+                throw Error("Mesh configuration is required");
+            if(mMesh->width < 2 || mMesh->height < 2 || mMesh->instances == 0 ||
+               mMesh->instances > static_cast<uint32_t>(std::numeric_limits<GLsizei>::max()))
+                throw Error("Invalid mesh grid dimensions or instance count");
+            const uint64_t indexCount = static_cast<uint64_t>(mMesh->width - 1) * (mMesh->height - 1) * 6U;
+            if(indexCount > static_cast<uint64_t>(std::numeric_limits<GLsizei>::max()))
+                throw Error("Mesh index count exceeds OpenGL draw range");
+
+            std::vector<Vec2> vertices;
+            vertices.reserve(static_cast<size_t>(mMesh->width) * mMesh->height);
+            for(uint32_t y = 0; y < mMesh->height; ++y) {
+                for(uint32_t x = 0; x < mMesh->width; ++x) {
+                    vertices.push_back(Vec2{
+                        static_cast<float>(x) / static_cast<float>(mMesh->width - 1),
+                        static_cast<float>(y) / static_cast<float>(mMesh->height - 1),
+                    });
+                }
+            }
+            std::vector<uint32_t> indices;
+            indices.reserve(static_cast<size_t>(indexCount));
+            for(uint32_t y = 0; y + 1 < mMesh->height; ++y) {
+                for(uint32_t x = 0; x + 1 < mMesh->width; ++x) {
+                    const uint32_t i0 = y * mMesh->width + x;
+                    const uint32_t i1 = i0 + 1;
+                    const uint32_t i3 = i0 + mMesh->width;
+                    const uint32_t i2 = i3 + 1;
+                    indices.insert(indices.end(), { i0, i1, i2, i0, i2, i3 });
+                }
+            }
+            mMeshIndexCount = static_cast<GLsizei>(indices.size());
+            glGenVertexArrays(1, &mMeshVAO);
+            glGenBuffers(1, &mMeshVBO);
+            glGenBuffers(1, &mMeshEBO);
+            glBindVertexArray(mMeshVAO);
+            glBindBuffer(GL_ARRAY_BUFFER, mMeshVBO);
+            glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size() * sizeof(Vec2)), vertices.data(), GL_STATIC_DRAW);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mMeshEBO);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(indices.size() * sizeof(uint32_t)), indices.data(), GL_STATIC_DRAW);
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(Vec2), nullptr);
+            glBindVertexArray(0);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            if(mMesh->depth) {
+                glGenRenderbuffers(1, &mMeshDepthRBO);
+                glGenFramebuffers(1, &mMeshWireframeFBO);
+                glGenTextures(1, &mMeshWireframeTexture);
+                glBindTexture(GL_TEXTURE_2D, mMeshWireframeTexture);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                glBindTexture(GL_TEXTURE_2D, 0);
+                mMeshCompositeProgram = compileMeshCompositeProgram();
+            }
+        }
+
         mProgram = compileProgram(src);
         refreshUniformLocations();
 
@@ -747,8 +993,66 @@ public:
     ~RenderPass() {
         if(mMrtFBO != 0)
             glDeleteFramebuffers(1, &mMrtFBO);
+        if(mMeshDepthRBO != 0)
+            glDeleteRenderbuffers(1, &mMeshDepthRBO);
+        if(mMeshWireframeFBO != 0)
+            glDeleteFramebuffers(1, &mMeshWireframeFBO);
+        if(mMeshWireframeTexture != 0)
+            glDeleteTextures(1, &mMeshWireframeTexture);
+        if(mMeshCompositeProgram != 0)
+            glDeleteProgram(mMeshCompositeProgram);
+        if(mMeshEBO != 0)
+            glDeleteBuffers(1, &mMeshEBO);
+        if(mMeshVBO != 0)
+            glDeleteBuffers(1, &mMeshVBO);
+        if(mMeshVAO != 0)
+            glDeleteVertexArrays(1, &mMeshVAO);
         glDeleteSamplers(static_cast<GLsizei>(mSamplers.size()), mSamplers.data());
         glDeleteProgram(mProgram);
+    }
+    void setWireframe(const bool enabled) {
+        if(enabled && (mType != NodeType::Mesh || !mMesh || !mMesh->depth))
+            throw Error("Wireframe overlay requires a depth-enabled mesh pass");
+        mWireframe = enabled;
+    }
+    [[nodiscard]] bool wireframeEnabled() const noexcept {
+        return mWireframe;
+    }
+    void renderWireframeOverlay(const GLuint framebuffer, const Vec2 frameBufferSize, const Vec2 clipMin,
+                                const Vec2 clipMax) const {
+        if(!mWireframe)
+            return;
+        if(mMeshWireframeTexture == 0 || mMeshCompositeProgram == 0)
+            throw Error("Wireframe overlay has no rendered mesh target");
+
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer);
+        glViewport(0, 0, static_cast<GLsizei>(frameBufferSize.x), static_cast<GLsizei>(frameBufferSize.y));
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(static_cast<GLint>(clipMin.x), static_cast<GLint>(frameBufferSize.y - clipMax.y),
+                  static_cast<GLint>(clipMax.x - clipMin.x), static_cast<GLint>(clipMax.y - clipMin.y));
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+        glDisable(GL_CULL_FACE);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        glUseProgram(mMeshCompositeProgram);
+        const auto location = glGetUniformLocation(mMeshCompositeProgram, "u_overlay");
+        if(location != -1)
+            glUniform1i(location, 0);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, mMeshWireframeTexture);
+        glBindVertexArray(mMeshVAO);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0);
+        glBindTexture(GL_TEXTURE_2D, 0);
+
+        glDisable(GL_BLEND);
+        glDisable(GL_SCISSOR_TEST);
+        glDepthMask(GL_TRUE);
+    }
+    [[nodiscard]] bool isMesh() const noexcept {
+        return mType == NodeType::Mesh;
     }
     [[nodiscard]] NodeType getType() const noexcept {
         return mType;
@@ -759,23 +1063,32 @@ public:
     [[nodiscard]] bool hasOffscreenTarget() const noexcept {
         return !mBuffers.empty() && mBuffers.front().t1 != nullptr;
     }
+    [[nodiscard]] uint32_t resolveReadOutput(const uint32_t output) const {
+        if(output != std::numeric_limits<uint32_t>::max())
+            return output;
+        if(mType != NodeType::Mesh || !mMesh || !mMesh->depth)
+            throw Error("Pass has no readable mesh depth output");
+        return static_cast<uint32_t>(1 + mExtraFormats.size());
+    }
     [[nodiscard]] std::vector<uint8_t> readRgb(const uint32_t output = 0) {
-        if(mType != NodeType::Image && mType != NodeType::Compute)
-            throw Error("Only image/buffer/compute passes can be read as RGB");
-        if(output >= mBuffers.size() || !mBuffers[output].t1)
+        if(mType != NodeType::Image && mType != NodeType::Compute && mType != NodeType::Mesh)
+            throw Error("Only image/buffer/compute/mesh passes can be read as RGB");
+        const auto resolvedOutput = resolveReadOutput(output);
+        if(resolvedOutput >= mBuffers.size() || !mBuffers[resolvedOutput].t1)
             throw Error("Pass render-target index is out of range or has no offscreen state");
-        return mBuffers[output].t1->readRgb();
+        return mBuffers[resolvedOutput].t1->readRgb();
     }
     [[nodiscard]] std::vector<float> readRgba32f(const uint32_t output = 0) {
-        if(mType != NodeType::Image && mType != NodeType::Compute)
-            throw Error("Only image/buffer/compute passes can be snapshotted as RGBA32F");
-        if(output >= mBuffers.size() || !mBuffers[output].t1)
+        if(mType != NodeType::Image && mType != NodeType::Compute && mType != NodeType::Mesh)
+            throw Error("Only image/buffer/compute/mesh passes can be snapshotted as RGBA32F");
+        const auto resolvedOutput = resolveReadOutput(output);
+        if(resolvedOutput >= mBuffers.size() || !mBuffers[resolvedOutput].t1)
             throw Error("Pass render-target index is out of range or has no offscreen state");
-        return mBuffers[output].t1->readRgba32f();
+        return mBuffers[resolvedOutput].t1->readRgba32f();
     }
     void overrideRgba8(const uint32_t width, const uint32_t height, const uint8_t* data) {
-        if(mType != NodeType::Image && mType != NodeType::Compute)
-            throw Error("Only image/buffer/compute passes can be overridden with a 2D image");
+        if(mType != NodeType::Image && mType != NodeType::Compute && mType != NodeType::Mesh)
+            throw Error("Only image/buffer/compute/mesh passes can be overridden with a 2D image");
         if(!hasOffscreenTarget())
             throw Error("The final image pass cannot be used as a persistent buffer override");
         if(mFixedResolution &&
@@ -788,8 +1101,8 @@ public:
             second->writeRgba8(width, height, data);
     }
     void restoreRgba32f(const uint32_t width, const uint32_t height, const float* data) {
-        if(mType != NodeType::Image && mType != NodeType::Compute)
-            throw Error("Only image/buffer/compute passes can restore RGBA32F state");
+        if(mType != NodeType::Image && mType != NodeType::Compute && mType != NodeType::Mesh)
+            throw Error("Only image/buffer/compute/mesh passes can restore RGBA32F state");
         if(!hasOffscreenTarget())
             throw Error("The final image pass has no persistent buffer state");
         if(mFixedResolution &&
@@ -915,6 +1228,210 @@ public:
             }
             for(const auto& channel : mChannels)
                 glBindSampler(channel.slot, 0);
+            glActiveTexture(GL_TEXTURE0);
+            return;
+        }
+
+        if(mType == NodeType::Mesh) {
+            if(!mMesh || mBuffers.empty())
+                throw Error("Mesh pass has no render targets");
+            const auto screenSize = Vec2{ clipMax.x - clipMin.x, clipMax.y - clipMin.y };
+            const auto size = mFixedResolution.value_or(screenSize);
+            const auto uniformSize = mFixedResolution.value_or(canvasSize);
+            const auto width = checkedPixelDimension(size.x, "Mesh target width");
+            const auto height = checkedPixelDimension(size.y, "Mesh target height");
+            mLastWidth = width;
+            mLastHeight = height;
+
+            std::vector<FrameBuffer*> outputs;
+            outputs.reserve(mBuffers.size());
+            for(auto& target : mBuffers) {
+                auto* output = target.get();
+                if(!output)
+                    throw Error("Mesh pass requires offscreen render targets");
+                output->bind(width, height);
+                output->unbind();
+                outputs.push_back(output);
+            }
+
+            glBindFramebuffer(GL_FRAMEBUFFER, mMrtFBO);
+            std::array<GLenum, 8> drawBuffers{};
+            if(outputs.size() > drawBuffers.size())
+                throw Error("Mesh pass exceeds OpenGL color attachment limit");
+            for(uint32_t output = 0; output < outputs.size(); ++output) {
+                const auto attachment = GL_COLOR_ATTACHMENT0 + output;
+                glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, GL_TEXTURE_2D,
+                                       static_cast<GLuint>(outputs[output]->getTexture()), 0);
+                drawBuffers[output] = attachment;
+            }
+            glDrawBuffers(static_cast<GLsizei>(outputs.size()), drawBuffers.data());
+
+            if(mMesh->depth) {
+                if(mMeshDepthWidth != width || mMeshDepthHeight != height) {
+                    glBindRenderbuffer(GL_RENDERBUFFER, mMeshDepthRBO);
+                    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24,
+                                          static_cast<GLsizei>(width), static_cast<GLsizei>(height));
+                    glBindRenderbuffer(GL_RENDERBUFFER, 0);
+                    mMeshDepthWidth = width;
+                    mMeshDepthHeight = height;
+                }
+                glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, mMeshDepthRBO);
+            }
+            if(glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+                throw Error("Mesh framebuffer is incomplete");
+
+            glViewport(0, 0, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
+            glDisable(GL_SCISSOR_TEST);
+            glDisable(GL_BLEND);
+            for(uint32_t output = 0; output < outputs.size(); ++output) {
+                if(mMesh->depth && output + 1 == outputs.size()) {
+                    constexpr GLfloat depthClear[4]{ 1.0f, 0.0f, 0.0f, 0.0f };
+                    glClearBufferfv(GL_COLOR, static_cast<GLint>(output), depthClear);
+                } else {
+                    glClearBufferfv(GL_COLOR, static_cast<GLint>(output), mMesh->clear.data());
+                }
+            }
+            if(mMesh->depth) {
+                glEnable(GL_DEPTH_TEST);
+                glDepthFunc(GL_LESS);
+                glDepthMask(GL_TRUE);
+                glClearDepth(1.0);
+                glClear(GL_DEPTH_BUFFER_BIT);
+            } else {
+                glDisable(GL_DEPTH_TEST);
+            }
+            switch(mMesh->cull) {
+                case MeshCull::None:
+                    glDisable(GL_CULL_FACE);
+                    break;
+                case MeshCull::Back:
+                    glEnable(GL_CULL_FACE);
+                    glCullFace(GL_BACK);
+                    break;
+                case MeshCull::Front:
+                    glEnable(GL_CULL_FACE);
+                    glCullFace(GL_FRONT);
+                    break;
+            }
+
+            glUseProgram(mProgram);
+            glBindVertexArray(mMeshVAO);
+            for(auto& channel : mChannels) {
+                if(mLocationChannelResolution[channel.slot] != -1) {
+                    if(channel.tex.type != TexType::Tex3D) {
+                        const auto texSize = channel.size.value_or(
+                            channel.tex.type == TexType::CubeMap ?
+                                Vec2{ static_cast<float>(cubeMapRenderTargetSize), static_cast<float>(cubeMapRenderTargetSize) } :
+                                canvasSize);
+                        glUniform3f(mLocationChannelResolution[channel.slot], texSize.x, texSize.y, 1.0f);
+                    } else {
+                        const auto x = channel.size->x;
+                        glUniform3f(mLocationChannelResolution[channel.slot], x, x, x);
+                    }
+                }
+                if(mLocationChannelTime[channel.slot] != -1)
+                    glUniform1f(mLocationChannelTime[channel.slot], uniform.time);
+                if(mLocationChannel[channel.slot] == -1)
+                    continue;
+                glUniform1i(mLocationChannel[channel.slot], static_cast<GLint>(channel.slot));
+                glActiveTexture(GL_TEXTURE0 + channel.slot);
+                const auto type = channel.tex.type == TexType::CubeMap ? GL_TEXTURE_CUBE_MAP :
+                    channel.tex.type == TexType::Tex2D ? GL_TEXTURE_2D : GL_TEXTURE_3D;
+                glBindTexture(type, static_cast<GLuint>(channel.tex.get()));
+                if(channel.filter == Filter::Mipmap)
+                    glGenerateMipmap(type);
+                glBindSampler(channel.slot, mSamplers[channel.slot]);
+            }
+
+            if(mLocationResolution != -1)
+                glUniform3f(mLocationResolution, uniformSize.x, uniformSize.y, 0.0f);
+            if(mLocationTime != -1)
+                glUniform1f(mLocationTime, uniform.time);
+            if(mLocationTimeDelta != -1)
+                glUniform1f(mLocationTimeDelta, uniform.timeDelta);
+            if(mLocationFrameRate != -1)
+                glUniform1f(mLocationFrameRate, uniform.frameRate);
+            if(mLocationFrame != -1)
+                glUniform1i(mLocationFrame, uniform.frame);
+            if(mLocationIteration != -1)
+                glUniform1i(mLocationIteration, 0);
+            if(mLocationMouse != -1)
+                glUniform4f(mLocationMouse, uniform.mouse.x, uniform.mouse.y, uniform.mouse.z, uniform.mouse.w);
+            if(mLocationDate != -1)
+                glUniform4f(mLocationDate, uniform.date.x, uniform.date.y, uniform.date.z, uniform.date.w);
+            if(mLocationMusicBands != -1)
+                glUniform4f(mLocationMusicBands, uniform.audioBands.x, uniform.audioBands.y, uniform.audioBands.z, uniform.audioBands.w);
+            if(mLocationMusicHits != -1)
+                glUniform4f(mLocationMusicHits, uniform.audioHits.x, uniform.audioHits.y, uniform.audioHits.z, uniform.audioHits.w);
+            if(mLocationMusicBeat != -1)
+                glUniform4f(mLocationMusicBeat, uniform.audioBeat.x, uniform.audioBeat.y, uniform.audioBeat.z, uniform.audioBeat.w);
+            if(mLocationMusicStereo != -1)
+                glUniform4f(mLocationMusicStereo, uniform.audioStereo.x, uniform.audioStereo.y, uniform.audioStereo.z, uniform.audioStereo.w);
+            if(mLocationMusicStructure != -1)
+                glUniform4f(mLocationMusicStructure, uniform.audioStructure.x, uniform.audioStructure.y,
+                            uniform.audioStructure.z, uniform.audioStructure.w);
+            if(mLocationMusicMeta != -1)
+                glUniform4f(mLocationMusicMeta, uniform.audioMeta.x, uniform.audioMeta.y, uniform.audioMeta.z, uniform.audioMeta.w);
+            if(mLocationMeshSize != -1)
+                glUniform2i(mLocationMeshSize, static_cast<GLint>(mMesh->width), static_cast<GLint>(mMesh->height));
+            if(mLocationMeshInstances != -1)
+                glUniform1i(mLocationMeshInstances, static_cast<GLint>(mMesh->instances));
+            if(mLocationMeshWireframe != -1)
+                glUniform1i(mLocationMeshWireframe, 0);
+            applyCustomUniforms(uniform);
+
+            for(const auto& [binding, id] : mStorageBuffers)
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, binding, static_cast<GLuint>(id));
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            glDrawElementsInstanced(GL_TRIANGLES, mMeshIndexCount, GL_UNSIGNED_INT, nullptr,
+                                    static_cast<GLsizei>(mMesh->instances));
+
+            if(mWireframe) {
+                if(mMeshWireframeWidth != width || mMeshWireframeHeight != height) {
+                    glBindTexture(GL_TEXTURE_2D, mMeshWireframeTexture);
+                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, static_cast<GLsizei>(width),
+                                 static_cast<GLsizei>(height), 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                    glBindTexture(GL_TEXTURE_2D, 0);
+                    mMeshWireframeWidth = width;
+                    mMeshWireframeHeight = height;
+                }
+                glBindFramebuffer(GL_FRAMEBUFFER, mMeshWireframeFBO);
+                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mMeshWireframeTexture, 0);
+                glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, mMeshDepthRBO);
+                constexpr GLenum wireframeBuffer = GL_COLOR_ATTACHMENT0;
+                glDrawBuffers(1, &wireframeBuffer);
+                if(glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+                    throw Error("Mesh wireframe framebuffer is incomplete");
+
+                constexpr GLfloat transparent[4]{ 0.0f, 0.0f, 0.0f, 0.0f };
+                glClearBufferfv(GL_COLOR, 0, transparent);
+                glEnable(GL_DEPTH_TEST);
+                glDepthFunc(GL_LEQUAL);
+                glDepthMask(GL_FALSE);
+                if(mLocationMeshWireframe != -1)
+                    glUniform1i(mLocationMeshWireframe, 1);
+                glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                glDrawElementsInstanced(GL_TRIANGLES, mMeshIndexCount, GL_UNSIGNED_INT, nullptr,
+                                        static_cast<GLsizei>(mMesh->instances));
+                glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+                if(mLocationMeshWireframe != -1)
+                    glUniform1i(mLocationMeshWireframe, 0);
+                glDepthMask(GL_TRUE);
+                glDepthFunc(GL_LESS);
+            }
+
+            if(!mStorageBuffers.empty())
+                glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+            for(const auto& [binding, id] : mStorageBuffers) {
+                SHADERTOY_UNUSED(id);
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, binding, 0);
+            }
+            for(const auto& channel : mChannels)
+                glBindSampler(channel.slot, 0);
+            glBindVertexArray(0);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glDisable(GL_CULL_FACE);
+            glDisable(GL_DEPTH_TEST);
             glActiveTexture(GL_TEXTURE0);
             return;
         }
@@ -1546,10 +2063,11 @@ public:
                  std::vector<Channel> channels, std::optional<Vec2> fixedResolution, bool clampOutput,
                  const RenderFormat format, std::vector<RenderFormat> extraFormats, const uint32_t iterations,
                  const uint32_t localSizeX, const uint32_t localSizeY, const uint32_t localSizeZ,
-                 std::vector<std::pair<uint32_t, BufferId>> storageBuffers) override {
+                 std::vector<std::pair<uint32_t, BufferId>> storageBuffers, std::optional<MeshConfig> mesh) override {
         mRenderPasses.push_back(std::make_unique<RenderPass>(
             std::move(name), src, type, std::move(target), std::move(channels), fixedResolution, clampOutput, format,
-            std::move(extraFormats), iterations, localSizeX, localSizeY, localSizeZ, std::move(storageBuffers)));
+            std::move(extraFormats), iterations, localSizeX, localSizeY, localSizeZ, std::move(storageBuffers),
+            std::move(mesh)));
     }
 
     void reloadPassSource(const std::string_view passName, const std::string& src) override {
@@ -1558,6 +2076,16 @@ public:
         if(selected == mRenderPasses.end())
             throw Error("Unknown shader pass: " + std::string(passName));
         (*selected)->reloadSource(src);
+    }
+
+    void setWireframePass(const std::string_view passName, const bool enabled) override {
+        const auto selected = std::find_if(mRenderPasses.begin(), mRenderPasses.end(),
+                                           [passName](const auto& pass) { return pass->getName() == passName; });
+        if(selected == mRenderPasses.end())
+            throw Error("Unknown shader pass: " + std::string(passName));
+        if(!(*selected)->isMesh())
+            throw Error("Wireframe overlay is only supported for mesh passes: " + std::string(passName));
+        (*selected)->setWireframe(enabled);
     }
 
     void setProfilingEnabled(const bool enabled) override {
@@ -1609,6 +2137,10 @@ public:
             if(!pass->hasOffscreenTarget())
                 glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(callerFramebuffer));
             renderProfiled(*pass, frameBufferSize, clipMin, clipMax, size, uniform);
+        }
+        for(const auto& pass : mRenderPasses) {
+            if(pass->wireframeEnabled())
+                pass->renderWireframeOverlay(static_cast<GLuint>(callerFramebuffer), frameBufferSize, clipMin, clipMax);
         }
         finishProfileFrame();
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(callerFramebuffer));
@@ -1689,6 +2221,13 @@ public:
             if(!pass->hasOffscreenTarget())
                 fb->bind(width, height);
             renderProfiled(*pass, size, Vec2{ 0, 0 }, size, size, uniform);
+        }
+        fb->bind(width, height);
+        GLint captureFramebuffer = 0;
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &captureFramebuffer);
+        for(const auto& pass : mRenderPasses) {
+            if(pass->wireframeEnabled())
+                pass->renderWireframeOverlay(static_cast<GLuint>(captureFramebuffer), size, Vec2{ 0, 0 }, size);
         }
         finishProfileFrame();
 

@@ -9,6 +9,7 @@ const MAX_INCLUDE_DEPTH: usize = 64;
 #[derive(Debug, Clone)]
 pub struct ExpandedPassSource {
     pub text: String,
+    pub vertex_text: Option<String>,
     pub dependencies: BTreeSet<PathBuf>,
 }
 
@@ -23,11 +24,6 @@ pub fn expand_all(loaded: &LoadedManifest) -> Result<SourceGraph> {
 }
 
 pub fn expand_pass(loaded: &LoadedManifest, pass: &Pass) -> Result<ExpandedPassSource> {
-    let source = checked_file(
-        &loaded.root,
-        &loaded.root.join(&pass.source),
-        "shader source",
-    )?;
     let include_dirs = loaded
         .manifest
         .shader
@@ -36,27 +32,63 @@ pub fn expand_pass(loaded: &LoadedManifest, pass: &Pass) -> Result<ExpandedPassS
         .map(|dir| checked_dir(&loaded.root, &loaded.root.join(dir)))
         .collect::<Result<Vec<_>>>()?;
 
+    let declarations = crate::uniforms::declarations(&loaded.manifest.uniforms);
     let mut dependencies = BTreeSet::new();
+    let text = expand_stage(
+        loaded,
+        &pass.source,
+        "shader source",
+        &include_dirs,
+        &declarations,
+        &mut dependencies,
+    )
+    .with_context(|| format!("while expanding fragment stage for pass '{}'", pass.name))?;
+    let vertex_text = pass
+        .vertex
+        .as_deref()
+        .map(|vertex| {
+            expand_stage(
+                loaded,
+                vertex,
+                "vertex shader source",
+                &include_dirs,
+                &declarations,
+                &mut dependencies,
+            )
+            .with_context(|| format!("while expanding vertex stage for pass '{}'", pass.name))
+        })
+        .transpose()?;
+
+    Ok(ExpandedPassSource {
+        text,
+        vertex_text,
+        dependencies,
+    })
+}
+
+fn expand_stage(
+    loaded: &LoadedManifest,
+    relative: &str,
+    label: &str,
+    include_dirs: &[PathBuf],
+    declarations: &str,
+    dependencies: &mut BTreeSet<PathBuf>,
+) -> Result<String> {
+    let source = checked_file(&loaded.root, &loaded.root.join(relative), label)?;
     let mut stack = Vec::new();
     let expanded = expand_file(
         &loaded.root,
         &source,
-        &include_dirs,
-        &mut dependencies,
+        include_dirs,
+        dependencies,
         &mut stack,
         0,
-    )
-    .with_context(|| format!("while expanding pass '{}'", pass.name))?;
-    let declarations = crate::uniforms::declarations(&loaded.manifest.uniforms);
-    let text = if declarations.is_empty() {
+    )?;
+    Ok(if declarations.is_empty() {
         expanded
     } else {
-        format!(
-            "{declarations}#line 1
-{expanded}"
-        )
-    };
-    Ok(ExpandedPassSource { text, dependencies })
+        format!("{declarations}#line 1\n{expanded}")
+    })
 }
 
 fn expand_file(

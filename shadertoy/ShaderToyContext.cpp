@@ -224,6 +224,12 @@ void ShaderToyContext::reloadPassSource(const std::string_view passName, const s
     mPipeline->reloadPassSource(passName, source);
 }
 
+void ShaderToyContext::setWireframePass(const std::string_view passName, const bool enabled) {
+    if(!mPipeline)
+        throw Error("No shader pipeline is loaded");
+    mPipeline->setWireframePass(passName, enabled);
+}
+
 void ShaderToyContext::overridePassRgba8(const std::string_view passName, const uint32_t width, const uint32_t height,
                                          const uint8_t* data) {
     if(!mPipeline)

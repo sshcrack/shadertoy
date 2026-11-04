@@ -254,6 +254,7 @@ EditorShader& PipelineEditor::spawnShader(NodeType type) {
 static ImColor getIconColor(const NodeType type) {
     switch(type) {
         case NodeType::Image:
+        case NodeType::Mesh:
             return { 255, 0, 0 };
         case NodeType::CubeMap:
             return { 0, 255, 0 };
@@ -273,6 +274,7 @@ static void drawPinIcon(const EditorPin& pin, const bool connected, const int al
     color.Value.w = static_cast<float>(alpha) / 255.0f;
     switch(pin.type) {
         case NodeType::Image:
+        case NodeType::Mesh:
             iconType = IconType::Square;
             break;
         case NodeType::CubeMap:

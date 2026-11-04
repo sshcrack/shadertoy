@@ -37,6 +37,7 @@ pub fn render_project(options: &RenderOptions) -> Result<Output> {
     let mut runtime = Runtime::new(&context)?;
     let project = build_native_project(&loaded)?;
     runtime.load_project(&project)?;
+    apply_wireframe(&mut runtime, &loaded, options.wireframe.as_deref())?;
     let uniform_values =
         crate::uniforms::parse_assignments(&loaded.manifest.uniforms, &options.set_uniforms)?;
     crate::uniforms::apply_to_runtime(&mut runtime, &uniform_values)?;
@@ -79,7 +80,9 @@ pub fn render_project(options: &RenderOptions) -> Result<Output> {
                 .find(|pass| pass.name == name)
                 .with_context(|| format!("unknown render pass '{name}'"))?;
             if matches!(pass.kind, PassKind::Cubemap | PassKind::Sound) {
-                bail!("named renders only support the final image and 2D buffer/compute passes");
+                bail!(
+                    "named renders only support the final image and 2D buffer/compute/mesh passes"
+                );
             }
             let (pass_width, pass_height) = loaded.manifest.pass_dimensions(pass, width, height);
             runtime.snapshot_pass_rgb(name, pass_width, pass_height)?
@@ -103,6 +106,7 @@ pub fn render_project(options: &RenderOptions) -> Result<Output> {
         ),
         json: json!({
             "ok": true,
+            "audio": media.audio().to_json(),
             "project": loaded.manifest.project.name,
             "output": output,
             "width": output_width,
@@ -114,6 +118,30 @@ pub fn render_project(options: &RenderOptions) -> Result<Output> {
             "state": options.state,
         }),
     })
+}
+
+pub(crate) fn apply_wireframe(
+    runtime: &mut Runtime<'_>,
+    loaded: &LoadedManifest,
+    pass_name: Option<&str>,
+) -> Result<()> {
+    let Some(pass_name) = pass_name else {
+        return Ok(());
+    };
+    let pass = loaded
+        .manifest
+        .passes
+        .iter()
+        .find(|pass| pass.name == pass_name)
+        .with_context(|| format!("unknown wireframe pass '{pass_name}'"))?;
+    if pass.kind != PassKind::Mesh {
+        bail!("wireframe pass '{pass_name}' is not a mesh pass");
+    }
+    if !pass.mesh.as_ref().is_some_and(|mesh| mesh.depth) {
+        bail!("wireframe pass '{pass_name}' must have mesh depth enabled");
+    }
+    runtime.set_wireframe_pass(pass_name, true)?;
+    Ok(())
 }
 
 pub(super) fn restore_state(runtime: &mut Runtime<'_>, state: &StateFile) -> Result<()> {
@@ -226,8 +254,11 @@ pub(super) fn resolve_dimensions(
                 .iter()
                 .find(|pass| pass.name == *name)
                 .with_context(|| format!("state references unknown buffer pass '{name}'"))?;
-            if !matches!(pass.kind, PassKind::Buffer | PassKind::Compute) {
-                bail!("state buffer '{name}' is no longer a 2D buffer/compute pass");
+            if !matches!(
+                pass.kind,
+                PassKind::Buffer | PassKind::Compute | PassKind::Mesh
+            ) {
+                bail!("state buffer '{name}' is no longer a 2D buffer/compute/mesh pass");
             }
 
             if let Some(saved_format) = state.header.buffer_formats.get(name)
@@ -373,7 +404,7 @@ pub fn render_frames_project(options: &RenderFramesOptions) -> Result<Output> {
         .find(|pass| pass.name == selected_pass)
         .with_context(|| format!("unknown render pass '{selected_pass}'"))?;
     if matches!(pass.kind, PassKind::Cubemap | PassKind::Sound) {
-        bail!("render-frames only supports the final image and 2D buffer/compute passes");
+        bail!("render-frames only supports the final image and 2D buffer/compute/mesh passes");
     }
 
     let (selected_width, selected_height) = loaded.manifest.pass_dimensions(pass, width, height);
@@ -404,6 +435,7 @@ pub fn render_frames_project(options: &RenderFramesOptions) -> Result<Output> {
     let mut runtime = Runtime::new(&context)?;
     let project = build_native_project(&loaded)?;
     runtime.load_project(&project)?;
+    apply_wireframe(&mut runtime, &loaded, options.wireframe.as_deref())?;
     let uniform_values =
         crate::uniforms::parse_assignments(&loaded.manifest.uniforms, &options.set_uniforms)?;
     crate::uniforms::apply_to_runtime(&mut runtime, &uniform_values)?;
@@ -474,6 +506,7 @@ pub fn render_frames_project(options: &RenderFramesOptions) -> Result<Output> {
         ),
         json: json!({
             "ok": true,
+            "audio": media.audio().to_json(),
             "project": loaded.manifest.project.name,
             "output_dir": output_dir,
             "outputs": outputs,

@@ -34,6 +34,7 @@ pub(super) fn reload(
     fps: &mut f32,
     view: &mut String,
     uniform_values: &mut BTreeMap<String, crate::uniforms::UniformValue>,
+    wireframe: Option<&str>,
     preservation: ReloadPreservation,
 ) -> Result<()> {
     let previous_uniform_values = preservation.uniform_values.then(|| uniform_values.clone());
@@ -50,6 +51,7 @@ pub(super) fn reload(
     ensure_source_files_exist(&candidate)?;
     let (project, candidate_sources) = build_native_project_with_sources(&candidate)?;
     runtime.load_project(&project)?;
+    crate::ops::apply_wireframe(runtime, &candidate, wireframe)?;
     let mut next_uniform_values = crate::uniforms::defaults(&candidate.manifest.uniforms);
     if let Some(previous) = previous_uniform_values {
         for (name, value) in previous {
@@ -84,7 +86,11 @@ pub(super) fn reload(
         runtime.set_fixed_state(saved.time, saved.frame, saved.fps)?;
         for (name, (saved_dimensions, data)) in saved.buffers {
             if let Some(pass) = candidate.manifest.passes.iter().find(|pass| {
-                pass.name == name && matches!(pass.kind, PassKind::Buffer | PassKind::Compute)
+                pass.name == name
+                    && matches!(
+                        pass.kind,
+                        PassKind::Buffer | PassKind::Compute | PassKind::Mesh
+                    )
             }) {
                 let (pass_width, pass_height) =
                     candidate.manifest.pass_dimensions(pass, *width, *height);
@@ -151,6 +157,12 @@ pub(super) fn reload_changed_sources(
         return Ok(source_like);
     }
 
+    if impacted.iter().any(|pass| pass.kind == PassKind::Mesh) {
+        // Mesh hot reload changes a linked vertex+fragment program. Rebuild the
+        // project transactionally rather than partially replacing one stage.
+        return Ok(false);
+    }
+
     let mut replacements = Vec::with_capacity(impacted.len());
     for pass in impacted {
         replacements.push((pass.name.clone(), expand_pass(loaded, pass)?));
@@ -188,7 +200,10 @@ fn save_runtime_state(
 ) -> Result<SavedRuntimeState> {
     let mut buffers = BTreeMap::new();
     for pass in &loaded.manifest.passes {
-        if !matches!(pass.kind, PassKind::Buffer | PassKind::Compute) {
+        if !matches!(
+            pass.kind,
+            PassKind::Buffer | PassKind::Compute | PassKind::Mesh
+        ) {
             continue;
         }
         let (pass_width, pass_height) = loaded.manifest.pass_dimensions(pass, width, height);
@@ -435,6 +450,7 @@ height = 1
             &mut fps,
             &mut view,
             &mut uniform_values,
+            None,
             ReloadPreservation::RESET,
         )
         .expect("load cold ultra");
@@ -457,6 +473,7 @@ height = 1
             &mut fps,
             &mut view,
             &mut uniform_values,
+            None,
             ReloadPreservation::PRESET_SWITCH,
         )
         .expect("switch to low");
@@ -477,6 +494,7 @@ height = 1
             &mut fps,
             &mut view,
             &mut uniform_values,
+            None,
             ReloadPreservation::PRESET_SWITCH,
         )
         .expect("switch back to ultra");
@@ -506,6 +524,7 @@ height = 1
             &mut cold_fps,
             &mut cold_view,
             &mut cold_uniforms,
+            None,
             ReloadPreservation::RESET,
         )
         .expect("load independent cold ultra");

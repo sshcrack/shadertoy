@@ -96,7 +96,13 @@ supported remote assets local.
     The trace carries STTF, persistent state/SSBOs, timings, hashes, graph
     diagnostics, and optional pass readbacks. See shadertoy docs trace.
 
-11. Use live native-rendered review when iterating:
+11. Audio-reactive shaders: bind a channel to source "music" and drive it
+    with [audio] in ShaderToy.toml or --audio synthetic|none|FILE on any
+    rendering command. Check analysis values with:
+      shadertoy audio --audio song.wav --time 4.0
+    See shadertoy docs audio.
+
+12. Use live native-rendered review when iterating:
      shadertoy preview
     Or launch a named quality tier directly:
      shadertoy preview --preset medium
@@ -111,7 +117,7 @@ supported remote assets local.
     Shared GLSL can use quoted #include directives; preview recompiles only passes
     affected by a changed source/include and keeps existing feedback targets alive.
 
-12. Record an input-sensitive preview bug, then reproduce it without the browser:
+13. Record an input-sensitive preview bug, then reproduce it without the browser:
      shadertoy preview --record target/repro.strec
      shadertoy replay target/repro.strec -o target/replayed.png
 

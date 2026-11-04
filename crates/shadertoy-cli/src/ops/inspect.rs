@@ -146,17 +146,31 @@ pub fn inspect_buffer(options: &InspectBufferOptions) -> Result<Output> {
         .iter()
         .find(|pass| pass.name == options.pass)
         .with_context(|| format!("unknown pass '{}'", options.pass))?;
-    if !matches!(pass.kind, PassKind::Buffer | PassKind::Compute) {
-        bail!("runtime buffer inspection requires a 2D buffer/compute pass");
+    if !matches!(
+        pass.kind,
+        PassKind::Buffer | PassKind::Compute | PassKind::Mesh
+    ) {
+        bail!("runtime buffer inspection requires a 2D buffer/compute/mesh pass");
     }
-    if usize::from(options.output_index) > pass.extra_outputs.len() {
-        bail!(
-            "pass '{}' exposes outputs 0..{}; requested output {}",
-            pass.name,
-            pass.extra_outputs.len(),
-            options.output_index
-        );
-    }
+    let native_output = match options.pass_output {
+        crate::manifest::PassOutput::Index(index) => {
+            if usize::from(index) > pass.extra_outputs.len() {
+                bail!(
+                    "pass '{}' exposes outputs 0..{}; requested output {}",
+                    pass.name,
+                    pass.extra_outputs.len(),
+                    index
+                );
+            }
+            u32::from(index)
+        }
+        crate::manifest::PassOutput::Named(crate::manifest::NamedPassOutput::Depth) => {
+            if pass.kind != PassKind::Mesh || !pass.mesh.as_ref().is_some_and(|mesh| mesh.depth) {
+                bail!("pass '{}' has no readable depth output", pass.name);
+            }
+            shadertoy::PASS_OUTPUT_DEPTH
+        }
+    };
 
     let (width, height) =
         super::render::resolve_dimensions(&loaded, None, options.width, options.height)?;
@@ -184,12 +198,8 @@ pub fn inspect_buffer(options: &InspectBufferOptions) -> Result<Output> {
         crate::uniforms::parse_assignments(&loaded.manifest.uniforms, &options.set_uniforms)?;
     crate::uniforms::apply_to_runtime(&mut runtime, &uniform_values)?;
     let _ = render_from_zero(&mut runtime, frame, fps, width, height, &[], &media)?;
-    let values = runtime.snapshot_pass_output_rgba32f(
-        &pass.name,
-        options.output_index.into(),
-        pass_width,
-        pass_height,
-    )?;
+    let values =
+        runtime.snapshot_pass_output_rgba32f(&pass.name, native_output, pass_width, pass_height)?;
 
     let stats = BufferStats::from_rgba(&values);
     let pixel = options.pixel.map(|(x, y)| {
@@ -231,7 +241,7 @@ pub fn inspect_buffer(options: &InspectBufferOptions) -> Result<Output> {
     let mut human = format!(
         "Buffer: {} output {}\nReadback: RGBA32F\nResolution: {}x{}\nFrame: {} ({:.3}s)\nNaN: {}  Inf: {}\n",
         pass.name,
-        options.output_index,
+        options.pass_output,
         pass_width,
         pass_height,
         runtime.frame(),
@@ -264,11 +274,18 @@ pub fn inspect_buffer(options: &InspectBufferOptions) -> Result<Output> {
             "ok": true,
             "project": loaded.manifest.project.name,
             "pass": pass.name,
-            "output_index": options.output_index,
-            "format": if options.output_index == 0 {
-                format!("{:?}", pass.format).to_lowercase()
-            } else {
-                format!("{:?}", pass.extra_outputs[usize::from(options.output_index) - 1]).to_lowercase()
+            "pass_output": options.pass_output.to_string(),
+            "output_index": options.pass_output.color_index(),
+            "format": match options.pass_output {
+                crate::manifest::PassOutput::Index(0) => {
+                    format!("{:?}", pass.format).to_lowercase()
+                }
+                crate::manifest::PassOutput::Index(index) => {
+                    format!("{:?}", pass.extra_outputs[usize::from(index) - 1]).to_lowercase()
+                }
+                crate::manifest::PassOutput::Named(crate::manifest::NamedPassOutput::Depth) => {
+                    "r32f".to_string()
+                }
             },
             "width": pass_width,
             "height": pass_height,

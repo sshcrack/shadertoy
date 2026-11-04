@@ -46,6 +46,14 @@ pub fn init_project(path: &Path, template: Template) -> Result<Output> {
 pub fn check_project(options: &CheckOptions) -> Result<Output> {
     let loaded = LoadedManifest::load_with_preset(&options.project, options.preset.as_deref())?;
     ensure_source_files_exist(&loaded)?;
+    // Resolve (and decode) configured audio so missing/undecodable files fail here, not mid-render.
+    let audio = crate::audio::AudioDriver::resolve(&loaded.root, &loaded.manifest.audio, None)?;
+    for test in &loaded.manifest.tests {
+        if let Some(section) = &test.audio {
+            crate::audio::AudioDriver::resolve(&loaded.root, section, Some(section))
+                .with_context(|| format!("test '{}' audio", test.name))?;
+        }
+    }
 
     let diagnostics = super::graph::analyze_graph(&loaded, options.pedantic)?;
     let errors = diagnostics
@@ -98,6 +106,25 @@ pub fn check_project(options: &CheckOptions) -> Result<Output> {
     )?;
     let sound_passes = super::sound::check_sound_passes(&context, &loaded)?;
 
+    let mesh_passes = loaded
+        .manifest
+        .passes
+        .iter()
+        .filter_map(|pass| {
+            pass.mesh.as_ref().map(|mesh| {
+                json!({
+                    "name": pass.name,
+                    "grid_size": mesh.size,
+                    "instances": mesh.instances,
+                    "vertices": mesh.vertex_count(),
+                    "triangles": mesh.triangle_count(),
+                    "depth": mesh.depth,
+                    "cull": format!("{:?}", mesh.cull).to_lowercase(),
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+
     let pedantic_failed = options.pedantic && warnings != 0;
     let mut human = format!(
         "{}: {} ({} passes, {} assets",
@@ -113,6 +140,9 @@ pub fn check_project(options: &CheckOptions) -> Result<Output> {
         ));
     }
     human.push(')');
+    if !audio.is_silent() {
+        human.push_str(&format!("\n  audio: {}", audio.describe()));
+    }
     for diagnostic in &diagnostics {
         human.push_str(&format!(
             "\n  {} [{}] {}",
@@ -133,6 +163,8 @@ pub fn check_project(options: &CheckOptions) -> Result<Output> {
             "assets": loaded.manifest.assets.len(),
             "compiled": true,
             "sound_passes": sound_passes,
+            "mesh_passes": mesh_passes,
+            "audio": audio.to_json(),
             "pedantic": options.pedantic,
             "diagnostics": diagnostics,
             "errors": errors,
@@ -185,6 +217,12 @@ pub fn build_project(path: &Path, output: Option<&Path>, preset: Option<&str>) -
         &crate::uniforms::defaults(&loaded.manifest.uniforms),
     )?;
     runtime.save_sttf(&output)?;
+    annotate_sttf_render_defaults(
+        &output,
+        loaded.manifest.render.width,
+        loaded.manifest.render.height,
+        loaded.manifest.render.fps,
+    )?;
 
     Ok(Output {
         human: format!("Built {}", output.display()),
@@ -195,6 +233,37 @@ pub fn build_project(path: &Path, output: Option<&Path>, preset: Option<&str>) -
             "format": "sttf",
         }),
     })
+}
+
+pub(super) fn annotate_sttf_render_defaults(
+    path: &Path,
+    width: u32,
+    height: u32,
+    fps: f32,
+) -> Result<()> {
+    let bytes =
+        fs::read(path).with_context(|| format!("failed to read STTF build {}", path.display()))?;
+    let mut document: serde_json::Value = serde_json::from_slice(&bytes)
+        .with_context(|| format!("failed to parse STTF build {}", path.display()))?;
+    let metadata = document
+        .get_mut("metadata")
+        .and_then(serde_json::Value::as_object_mut)
+        .context("STTF build metadata must be an object")?;
+    metadata.insert(
+        "RenderWidth".to_string(),
+        serde_json::Value::String(width.to_string()),
+    );
+    metadata.insert(
+        "RenderHeight".to_string(),
+        serde_json::Value::String(height.to_string()),
+    );
+    metadata.insert(
+        "RenderFps".to_string(),
+        serde_json::Value::String(fps.to_string()),
+    );
+    fs::write(path, serde_json::to_vec_pretty(&document)?)
+        .with_context(|| format!("failed to write STTF build {}", path.display()))?;
+    Ok(())
 }
 
 fn template_name(template: Template) -> &'static str {

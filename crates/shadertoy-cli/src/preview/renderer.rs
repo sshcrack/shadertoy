@@ -4,12 +4,14 @@ use super::state::{
 };
 use super::*;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn render_loop(
     root: PathBuf,
     preset: Option<String>,
     shared: Shared,
     controls: mpsc::Receiver<Control>,
     preserve_reload_state: bool,
+    wireframe: Option<String>,
     runtime: &mut Runtime<'_>,
     mut recorder: Option<ReplayRecorder>,
 ) {
@@ -42,6 +44,7 @@ pub(super) fn render_loop(
         &mut fps,
         &mut view,
         &mut uniform_values,
+        wireframe.as_deref(),
         if preserve_reload_state {
             ReloadPreservation::RUNTIME_STATE
         } else {
@@ -109,6 +112,7 @@ pub(super) fn render_loop(
                 &mut paused,
                 &mut view,
                 &mut uniform_values,
+                wireframe.as_deref(),
                 &mut fresh,
                 &mut force_render,
                 &mut reload_due,
@@ -147,6 +151,7 @@ pub(super) fn render_loop(
                         &mut fps,
                         &mut view,
                         &mut uniform_values,
+                        wireframe.as_deref(),
                         if preserve_reload_state {
                             ReloadPreservation::RUNTIME_STATE
                         } else {
@@ -286,6 +291,7 @@ pub(super) fn render_loop(
                     &mut paused,
                     &mut view,
                     &mut uniform_values,
+                    wireframe.as_deref(),
                     &mut fresh,
                     &mut force_render,
                     &mut reload_due,
@@ -337,6 +343,7 @@ fn handle_control(
     paused: &mut bool,
     view: &mut String,
     uniform_values: &mut BTreeMap<String, crate::uniforms::UniformValue>,
+    wireframe: Option<&str>,
     fresh: &mut bool,
     force_render: &mut bool,
     reload_due: &mut Option<Instant>,
@@ -383,6 +390,7 @@ fn handle_control(
             fps,
             view,
             uniform_values,
+            wireframe,
             ReloadPreservation::RESET,
         ) {
             Ok(()) => {
@@ -434,6 +442,7 @@ fn handle_control(
                     fps,
                     view,
                     uniform_values,
+                    wireframe,
                     // A quality preset is a different graph configuration, not a
                     // hot reload of the same simulation. Rebuild from zeroed GPU
                     // resources and frame history just like a cold preview while

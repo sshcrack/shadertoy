@@ -58,6 +58,9 @@ struct TraceMetadata {
     asset_sha256: BTreeMap<String, String>,
     pass_timings: Vec<TraceTiming>,
     graph_diagnostics: serde_json::Value,
+    /// Synthetic host audio replayed with the trace (file audio is not embedded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    audio: Option<crate::audio::AudioSection>,
     state_header: serde_json::Value,
     synchronization: serde_json::Value,
     artifacts: BTreeMap<String, TraceArtifact>,
@@ -94,6 +97,12 @@ pub fn capture_trace(options: &TraceCaptureOptions) -> Result<Output> {
     validate_fps(fps)?;
     let frame = resolve_target_frame(&loaded, None, options.frame, options.time, fps)?;
     let media = crate::media::MediaInputs::new_headless(&loaded)?;
+    let audio = match media.audio() {
+        crate::audio::AudioDriver::File { .. } => {
+            bail!("trace capture does not embed audio files; use --audio synthetic or --audio none")
+        }
+        driver => driver.to_section(),
+    };
     let uniform_values =
         crate::uniforms::parse_assignments(&loaded.manifest.uniforms, &options.set_uniforms)?;
 
@@ -111,6 +120,7 @@ pub fn capture_trace(options: &TraceCaptureOptions) -> Result<Output> {
 
     let sttf_path = options.output.join("project.sttf");
     runtime.save_sttf(&sttf_path)?;
+    super::project::annotate_sttf_render_defaults(&sttf_path, width, height, fps)?;
     let final_path = options.output.join("final.png");
     save_rgb_png(&final_image, &final_path)?;
 
@@ -137,7 +147,13 @@ pub fn capture_trace(options: &TraceCaptureOptions) -> Result<Output> {
     let expanded = crate::source::expand_all(&loaded)?;
     let source_sha256 = expanded
         .iter()
-        .map(|(name, source)| (name.clone(), hex_sha256(source.text.as_bytes())))
+        .map(|(name, source)| {
+            let mut bytes = source.text.as_bytes().to_vec();
+            if let Some(vertex) = &source.vertex_text {
+                bytes.extend_from_slice(vertex.as_bytes());
+            }
+            (name.clone(), hex_sha256(&bytes))
+        })
         .collect::<BTreeMap<_, _>>();
     let mut asset_sha256 = BTreeMap::new();
     for asset in &loaded.manifest.assets {
@@ -173,6 +189,7 @@ pub fn capture_trace(options: &TraceCaptureOptions) -> Result<Output> {
             })
             .collect(),
         graph_diagnostics: serde_json::to_value(diagnostics)?,
+        audio,
         state_header: serde_json::to_value(&state.header)?,
         synchronization,
         artifacts,
@@ -269,12 +286,18 @@ pub fn replay_trace(options: &TraceReplayOptions) -> Result<Output> {
         .context("failed to create headless OpenGL context for trace replay")?;
     let mut runtime = Runtime::new(&context)?;
     runtime.load_sttf(&sttf)?;
+    // The recorded audio is part of the trace; `--audio*` flags do not apply.
+    let audio = match &metadata.audio {
+        Some(section) => crate::audio::AudioDriver::resolve(&trace_dir, section, Some(section))?,
+        None => crate::audio::AudioDriver::Silent,
+    };
     let actual = render_sttf_from_zero(
         &mut runtime,
         metadata.frame,
         metadata.fps,
         metadata.width,
         metadata.height,
+        &audio,
     )?;
 
     if let Some(output) = &options.output {
@@ -332,7 +355,10 @@ fn capture_runtime_state(
     let mut buffer_dimensions = BTreeMap::new();
     let mut buffer_formats = BTreeMap::new();
     for pass in &loaded.manifest.passes {
-        if !matches!(pass.kind, PassKind::Buffer | PassKind::Compute) {
+        if !matches!(
+            pass.kind,
+            PassKind::Buffer | PassKind::Compute | PassKind::Mesh
+        ) {
             continue;
         }
         let (pass_width, pass_height) = loaded.manifest.pass_dimensions(pass, width, height);
@@ -390,21 +416,29 @@ fn capture_intermediates(
     let root = trace_dir.join("passes");
     fs::create_dir_all(&root)?;
     for pass in &loaded.manifest.passes {
-        if !matches!(pass.kind, PassKind::Buffer | PassKind::Compute) {
+        if !matches!(
+            pass.kind,
+            PassKind::Buffer | PassKind::Compute | PassKind::Mesh
+        ) {
             continue;
         }
         let (pass_width, pass_height) = loaded.manifest.pass_dimensions(pass, width, height);
-        let outputs = 1 + pass.extra_outputs.len();
-        for output_index in 0..outputs {
+        let mut outputs = (0..=pass.extra_outputs.len())
+            .map(|index| (index as u32, index.to_string()))
+            .collect::<Vec<_>>();
+        if pass.kind == PassKind::Mesh && pass.mesh.as_ref().is_some_and(|mesh| mesh.depth) {
+            outputs.push((shadertoy::PASS_OUTPUT_DEPTH, "depth".to_string()));
+        }
+        for (native_output, output_label) in outputs {
             let Ok(values) = runtime.snapshot_pass_output_rgba32f(
                 &pass.name,
-                output_index as u32,
+                native_output,
                 pass_width,
                 pass_height,
             ) else {
                 continue;
             };
-            let stem = format!("{}-output-{}", file_safe_name(&pass.name), output_index);
+            let stem = format!("{}-output-{}", file_safe_name(&pass.name), output_label);
             let raw_path = root.join(format!("{stem}.rgba32f"));
             let mut bytes = Vec::with_capacity(values.len() * 4);
             for value in values {
@@ -413,22 +447,19 @@ fn capture_intermediates(
             fs::write(&raw_path, bytes)?;
             add_artifact(
                 artifacts,
-                &format!("pass:{}:output:{}:raw", pass.name, output_index),
+                &format!("pass:{}:output:{}:raw", pass.name, output_label),
                 trace_dir,
                 &raw_path,
             )?;
 
-            if let Ok(image) = runtime.snapshot_pass_output_rgb(
-                &pass.name,
-                output_index as u32,
-                pass_width,
-                pass_height,
-            ) {
+            if let Ok(image) =
+                runtime.snapshot_pass_output_rgb(&pass.name, native_output, pass_width, pass_height)
+            {
                 let png_path = root.join(format!("{stem}.png"));
                 save_rgb_png(&image, &png_path)?;
                 add_artifact(
                     artifacts,
-                    &format!("pass:{}:output:{}:png", pass.name, output_index),
+                    &format!("pass:{}:output:{}:png", pass.name, output_label),
                     trace_dir,
                     &png_path,
                 )?;
@@ -483,21 +514,28 @@ fn render_sttf_from_zero(
     fps: f32,
     width: u32,
     height: u32,
+    audio: &crate::audio::AudioDriver,
 ) -> Result<RgbImage> {
     if target_frame < 0 {
         bail!("trace frame must be non-negative");
     }
     runtime.set_fixed_state(0.0, 0, fps)?;
+    let render = |runtime: &mut Runtime<'_>| -> Result<RgbImage> {
+        if !audio.is_silent() {
+            audio.apply(runtime, runtime.time())?;
+        }
+        Ok(runtime.render(width, height)?)
+    };
     if target_frame == 0 {
-        return runtime.render(width, height).map_err(Into::into);
+        return render(runtime);
     }
-    let _ = runtime.render(width, height)?;
+    let _ = render(runtime)?;
     for _ in 1..target_frame {
         runtime.tick_fixed(1.0 / fps, fps)?;
-        let _ = runtime.render(width, height)?;
+        let _ = render(runtime)?;
     }
     runtime.tick_fixed(1.0 / fps, fps)?;
-    runtime.render(width, height).map_err(Into::into)
+    render(runtime)
 }
 
 fn validate_trace_dir(path: &Path) -> Result<()> {

@@ -1,3 +1,4 @@
+mod audio_args;
 mod conversions;
 use crate::docs;
 use crate::ops;
@@ -11,6 +12,7 @@ use crate::ops::{
 use crate::preview;
 use crate::preview::{PreviewConfig, PreviewTransport};
 use anyhow::Result;
+use audio_args::{AudioArgs, AudioProbeArgs};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde_json::json;
 use std::path::PathBuf;
@@ -26,6 +28,9 @@ struct Cli {
     /// Emit machine-readable JSON results and errors on stdout.
     #[arg(long, global = true)]
     json: bool,
+
+    #[command(flatten)]
+    audio: AudioArgs,
 
     #[command(subcommand)]
     command: Command,
@@ -45,7 +50,7 @@ enum Command {
     Graph(GraphArgs),
     /// Build the project into an STTF artifact.
     Build(BuildArgs),
-    /// Deterministically render the final image or a named 2D buffer/compute pass.
+    /// Deterministically render the final image or a named 2D buffer/compute/mesh pass.
     Render(RenderArgs),
     /// Render multiple deterministic frames in one runtime, optionally as a contact sheet.
     RenderFrames(RenderFramesArgs),
@@ -77,6 +82,8 @@ enum Command {
     Pass(PassArgs),
     /// Safely mutate iChannel bindings in ShaderToy.toml.
     Channel(ChannelArgs),
+    /// Print the resolved host audio and its analysis values at chosen times.
+    Audio(AudioProbeArgs),
     /// Read concise built-in project/agent documentation.
     Docs(DocsArgs),
 }
@@ -174,6 +181,9 @@ struct RenderArgs {
     /// Render/snapshot a named pass instead of the final Image pass.
     #[arg(long)]
     pass: Option<String>,
+    /// Overlay a depth-tested wireframe for the named mesh pass.
+    #[arg(long, value_name = "PASS")]
+    wireframe: Option<String>,
     #[arg(long)]
     width: Option<u32>,
     #[arg(long)]
@@ -217,6 +227,9 @@ struct RenderFramesArgs {
     /// Render/snapshot a named pass instead of the final Image pass.
     #[arg(long)]
     pass: Option<String>,
+    /// Overlay a depth-tested wireframe for the named mesh pass.
+    #[arg(long, value_name = "PASS")]
+    wireframe: Option<String>,
     #[arg(long)]
     width: Option<u32>,
     #[arg(long)]
@@ -341,7 +354,7 @@ struct SweepArgs {
     /// Contact-sheet column count. Defaults to a near-square layout.
     #[arg(long)]
     columns: Option<u32>,
-    /// Render/snapshot a named 2D buffer/compute pass instead of the final Image pass.
+    /// Render/snapshot a named 2D buffer/compute/mesh pass instead of the final Image pass.
     #[arg(long)]
     pass: Option<String>,
     #[arg(long)]
@@ -577,6 +590,9 @@ struct PreviewArgs {
     /// Reset time/buffer state on every successful hot reload.
     #[arg(long)]
     reset_on_reload: bool,
+    /// Overlay a depth-tested wireframe for the named mesh pass.
+    #[arg(long, value_name = "PASS")]
+    wireframe: Option<String>,
     /// Record shader-affecting preview input and exact rendered frame/time markers.
     #[arg(long, value_name = "PATH")]
     record: Option<PathBuf>,
@@ -601,7 +617,7 @@ enum InspectCommand {
     Pass { name: String },
     /// Inspect one pass's iChannel bindings.
     Channels { name: String },
-    /// Render and inspect a 2D buffer/compute pass's floating-point contents.
+    /// Render and inspect a 2D buffer/compute/mesh pass's floating-point contents.
     Buffer(InspectBufferArgs),
     /// Render and inspect a named shader-storage buffer.
     Storage(InspectStorageArgs),
@@ -613,8 +629,11 @@ enum InspectCommand {
 struct InspectBufferArgs {
     name: String,
     /// Render-target index for MRT passes (0 is the primary output).
-    #[arg(long, default_value_t = 0)]
-    output_index: u8,
+    #[arg(long, conflicts_with = "pass_output")]
+    output_index: Option<u8>,
+    /// Pass output selector: a color target index or "depth" for a depth-enabled mesh.
+    #[arg(long, value_name = "OUTPUT", conflicts_with = "output_index")]
+    pass_output: Option<String>,
     #[arg(long)]
     width: Option<u32>,
     #[arg(long)]
@@ -747,7 +766,7 @@ struct PassArgs {
 
 #[derive(Debug, Subcommand)]
 enum PassCommand {
-    /// Add an offscreen buffer/cubemap/compute pass and create a source stub if needed.
+    /// Add an offscreen buffer/mesh/cubemap/compute pass and create a source stub if needed.
     Add {
         name: String,
         #[arg(long, value_enum, default_value_t = PassKindArg::Buffer)]
@@ -783,9 +802,9 @@ enum ChannelCommand {
         source: String,
         #[arg(long, value_enum)]
         kind: Option<InputKindArg>,
-        /// Render-target index when the source is a multi-output pass.
-        #[arg(long, default_value_t = 0)]
-        output: u8,
+        /// Render-target index, or "depth" for a depth-enabled mesh pass.
+        #[arg(long, default_value = "0")]
+        output: String,
         #[arg(long)]
         previous: bool,
         #[arg(long, value_enum, default_value_t = FilterArg::Linear)]
@@ -803,7 +822,7 @@ enum ChannelCommand {
 
 #[derive(Debug, Args)]
 struct DocsArgs {
-    /// agent, project, import, manifest, passes, glsl, assets, buffers, channels, state, sweep, blind, experiment, profile, test, trace, graph, or preview.
+    /// agent, project, import, manifest, passes, glsl, assets, audio, buffers, channels, state, sweep, blind, experiment, profile, test, trace, graph, or preview.
     #[arg(default_value = "agent")]
     topic: String,
     /// Print the exact JSON Schema for ShaderToy.toml (manifest topic only).
@@ -875,6 +894,7 @@ enum TemplateArg {
 enum PassKindArg {
     #[default]
     Buffer,
+    Mesh,
     Cubemap,
     Compute,
     Sound,
@@ -930,7 +950,10 @@ pub fn run() -> ExitCode {
     };
     let json_mode = cli.json;
 
-    let result = dispatch(cli.command, json_mode);
+    let result = cli.audio.into_override().and_then(|audio| {
+        crate::audio::set_cli_override(audio);
+        dispatch(cli.command, json_mode)
+    });
     match result {
         Ok(Some(output)) => {
             let success = output
@@ -992,6 +1015,7 @@ fn dispatch(command: Command, json_mode: bool) -> Result<Option<Output>> {
             preset: args.preset,
             output: args.output,
             pass: args.pass,
+            wireframe: args.wireframe,
             width: args.width,
             height: args.height,
             fps: args.fps,
@@ -1008,6 +1032,7 @@ fn dispatch(command: Command, json_mode: bool) -> Result<Option<Output>> {
             contact_sheet: args.contact_sheet,
             columns: args.columns,
             pass: args.pass,
+            wireframe: args.wireframe,
             width: args.width,
             height: args.height,
             fps: args.fps,
@@ -1151,6 +1176,7 @@ fn dispatch(command: Command, json_mode: bool) -> Result<Option<Output>> {
                     no_open: args.no_open,
                     token: args.token,
                     preserve_reload_state: !args.reset_on_reload,
+                    wireframe: args.wireframe,
                     record: args.record,
                     transport: args.preview_transport,
                 },
@@ -1170,7 +1196,10 @@ fn dispatch(command: Command, json_mode: bool) -> Result<Option<Output>> {
             Some(InspectCommand::Buffer(buffer)) => ops::inspect_buffer(&InspectBufferOptions {
                 project: args.project,
                 pass: buffer.name,
-                output_index: buffer.output_index,
+                pass_output: match buffer.pass_output.as_deref() {
+                    Some(output) => parse_pass_output(output)?,
+                    None => crate::manifest::PassOutput::Index(buffer.output_index.unwrap_or(0)),
+                },
                 width: buffer.width,
                 height: buffer.height,
                 fps: buffer.fps,
@@ -1243,7 +1272,7 @@ fn dispatch(command: Command, json_mode: bool) -> Result<Option<Output>> {
                     channel,
                     source,
                     kind: kind.map(Into::into),
-                    output,
+                    output: parse_pass_output(&output)?,
                     previous,
                     filter: filter.into(),
                     wrap: wrap.into(),
@@ -1253,6 +1282,7 @@ fn dispatch(command: Command, json_mode: bool) -> Result<Option<Output>> {
                 ops::remove_channel(&args.project, &pass, channel)?
             }
         },
+        Command::Audio(args) => ops::probe_audio(&args.into_options())?,
         Command::Docs(args) => {
             let text = docs::topic(&args.topic, args.schema)?;
             Output {
@@ -1267,6 +1297,18 @@ fn dispatch(command: Command, json_mode: bool) -> Result<Option<Output>> {
         }
     };
     Ok(Some(output))
+}
+
+fn parse_pass_output(value: &str) -> Result<crate::manifest::PassOutput> {
+    if value.eq_ignore_ascii_case("depth") {
+        return Ok(crate::manifest::PassOutput::Named(
+            crate::manifest::NamedPassOutput::Depth,
+        ));
+    }
+    let index = value.parse::<u8>().map_err(|_| {
+        anyhow::anyhow!("pass output must be an integer in 0..255 or 'depth' (got '{value}')")
+    })?;
+    Ok(crate::manifest::PassOutput::Index(index))
 }
 
 fn emit(output: Output, json_mode: bool) {

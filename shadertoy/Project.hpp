@@ -8,12 +8,14 @@
 #include "shadertoy/STTF.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
 SHADERTOY_NAMESPACE_BEGIN
 
-enum class ProjectPassKind { Image, Buffer, CubeMap, Compute };
+enum class ProjectPassKind { Image, Buffer, Mesh, CubeMap, Compute };
+inline constexpr uint32_t ProjectDepthOutput = UINT32_MAX;
 enum class ProjectInputKind { Pass, Texture, CubeMap, Volume, Keyboard, Music };
 
 struct ProjectInput final {
@@ -40,6 +42,7 @@ struct ProjectPass final {
     uint32_t localSizeZ{ 1 };
     std::vector<StorageBufferBinding> storageBuffers;
     std::vector<RenderFormat> extraRenderFormats;
+    std::optional<MeshConfig> mesh;
 };
 
 struct ProjectTexture final {

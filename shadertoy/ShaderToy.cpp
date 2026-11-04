@@ -250,6 +250,17 @@ Result<void> Runtime::reloadPassSource(const std::string_view passName, std::str
     }
 }
 
+Result<void> Runtime::setWireframePass(const std::string_view passName, const bool enabled) {
+    try {
+        mImpl->context.setWireframePass(passName, enabled);
+        return {};
+    } catch(const Error& error) {
+        return std::unexpected(error);
+    } catch(const std::exception& error) {
+        return std::unexpected(Error(error.what()));
+    }
+}
+
 Result<void> Runtime::overridePassRgba8(const std::string_view passName, const uint32_t width, const uint32_t height,
                                         const std::vector<uint8_t>& rgba) {
     try {

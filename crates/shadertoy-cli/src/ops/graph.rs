@@ -200,8 +200,10 @@ pub(super) fn analyze_graph(
             .map(|input| input.source.as_str())
             .collect::<HashSet<_>>();
         for pass in &manifest.passes {
-            if matches!(pass.kind, PassKind::Buffer | PassKind::Compute)
-                && pass.width.is_none()
+            if matches!(
+                pass.kind,
+                PassKind::Buffer | PassKind::Compute | PassKind::Mesh
+            ) && pass.width.is_none()
                 && feedback_sources.contains(pass.name.as_str())
             {
                 diagnostics.push(GraphDiagnostic::warning(

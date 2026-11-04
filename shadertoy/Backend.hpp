@@ -144,8 +144,10 @@ public:
     virtual void addPass(std::string name, const std::string& src, NodeType type, std::vector<DoubleBufferedFB> target,
                          std::vector<Channel> channels, std::optional<Vec2> fixedResolution, bool clampOutput,
                          RenderFormat format, std::vector<RenderFormat> extraFormats, uint32_t iterations, uint32_t localSizeX,
-                         uint32_t localSizeY, uint32_t localSizeZ, std::vector<std::pair<uint32_t, BufferId>> storageBuffers) = 0;
+                         uint32_t localSizeY, uint32_t localSizeZ, std::vector<std::pair<uint32_t, BufferId>> storageBuffers,
+                         std::optional<MeshConfig> mesh) = 0;
     virtual void reloadPassSource(std::string_view passName, const std::string& src) = 0;
+    virtual void setWireframePass(std::string_view passName, bool enabled) = 0;
     virtual void render(Vec2 frameBufferSize, Vec2 clipMin, Vec2 clipMax, Vec2 size, const ShaderToyUniform& uniform) = 0;
     virtual void setProfilingEnabled(bool enabled) = 0;
     virtual void setProfilingSyncPerPass(bool enabled) = 0;

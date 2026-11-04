@@ -216,7 +216,12 @@ uniform int {SOUND_OFFSET_UNIFORM};
             input.channel.into(),
             native_kind,
             &input.source,
-            input.output.into(),
+            u32::from(
+                input
+                    .output
+                    .color_index()
+                    .expect("sound inputs cannot use mesh depth"),
+            ),
             input.frame == FrameRef::Previous,
             match input.filter {
                 Filter::Mipmap => NativeFilter::Mipmap,

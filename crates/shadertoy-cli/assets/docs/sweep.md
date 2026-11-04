@@ -19,7 +19,7 @@ semicolons (quote the shell argument):
 Each variant starts from fresh deterministic state. Variant PNGs are written to
 PROJECT/target/sweep by default and a contact-sheet.png is generated there.
 Use --output-dir, --contact-sheet, --columns, or --no-contact-sheet to adjust
-the outputs. --pass can compare a named 2D buffer/compute pass instead of Image.
+the outputs. --pass can compare a named 2D buffer/compute/mesh pass instead of Image.
 
 The command caps Cartesian expansion at 256 variants to avoid accidental
 explosive renders. All sweep values are parsed and range-checked using the

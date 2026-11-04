@@ -131,6 +131,7 @@ pub fn materialize_capture(
         },
         render: RenderSection::default(),
         shader: ShaderSection::default(),
+        audio: Default::default(),
         uniforms: Vec::new(),
         assets: builder.assets,
         passes: builder.manifest_passes,
@@ -223,6 +224,8 @@ impl<'a> ProjectBuilder<'a> {
                 name: pass.local_name.clone(),
                 kind: pass.kind,
                 source: source_path,
+                vertex: None,
+                mesh: None,
                 width: None,
                 height: None,
                 format: crate::manifest::RenderFormat::default(),
@@ -354,7 +357,7 @@ impl<'a> ProjectBuilder<'a> {
             channel,
             source,
             kind: Some(kind),
-            output: 0,
+            output: crate::manifest::PassOutput::Index(0),
             frame,
             filter,
             wrap,
@@ -388,6 +391,8 @@ impl<'a> ProjectBuilder<'a> {
             name: name.clone(),
             kind,
             source: source_path,
+            vertex: None,
+            mesh: None,
             width: if kind == PassKind::Compute {
                 Some(256)
             } else {
@@ -612,6 +617,7 @@ fn prepare_passes(render_passes: &[RenderPass]) -> Result<(String, Vec<ImportedP
         let fallback = match kind {
             PassKind::Image => "image".to_string(),
             PassKind::Buffer => format!("buffer-{synthetic}"),
+            PassKind::Mesh => format!("mesh-{synthetic}"),
             PassKind::Cubemap => format!("cubemap-{synthetic}"),
             PassKind::Compute => format!("compute-{synthetic}"),
             PassKind::Sound => format!("sound-{synthetic}"),

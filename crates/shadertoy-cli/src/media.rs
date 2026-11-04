@@ -1,3 +1,4 @@
+use crate::audio::AudioDriver;
 use crate::manifest::{AssetKind, LoadedManifest};
 use crate::project::existing_project_file;
 use anyhow::{Context, Result, bail};
@@ -21,6 +22,9 @@ pub struct VideoAsset {
 #[derive(Debug, Clone, Default)]
 pub struct MediaInputs {
     videos: Vec<VideoAsset>,
+    audio: AudioDriver,
+    /// Silent audio only needs one reset per runtime/media pairing.
+    audio_cleared: std::cell::Cell<bool>,
 }
 
 impl MediaInputs {
@@ -53,7 +57,20 @@ impl MediaInputs {
                 duration,
             });
         }
-        Ok(Self { videos })
+        let audio = AudioDriver::resolve(
+            &loaded.root,
+            &loaded.manifest.audio,
+            loaded.audio_pinned.then_some(&loaded.manifest.audio),
+        )?;
+        Ok(Self {
+            videos,
+            audio,
+            audio_cleared: std::cell::Cell::new(false),
+        })
+    }
+
+    pub fn audio(&self) -> &AudioDriver {
+        &self.audio
     }
 
     pub fn update(&self, runtime: &mut Runtime<'_>, time: f32) -> Result<()> {
@@ -66,6 +83,11 @@ impl MediaInputs {
             let rgba =
                 decode_video_frame_rgba8(&video.path, video.width, video.height, sample_time)?;
             runtime.update_texture_rgba8(&video.name, video.width, video.height, &rgba)?;
+        }
+        if !self.audio.is_silent() {
+            self.audio.apply(runtime, time)?;
+        } else if !self.audio_cleared.replace(true) {
+            runtime.clear_audio_input()?;
         }
         Ok(())
     }

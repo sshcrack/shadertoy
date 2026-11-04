@@ -6,9 +6,19 @@ generated wrapper.
 Entry points
 ------------
 
-Image and buffer fragment passes:
+Image, buffer, and mesh fragment passes:
 
   void mainImage(out vec4 fragColor, in vec2 fragCoord)
+
+Mesh vertex passes define ordinary GLSL main() themselves. The host prepends:
+
+  layout(location = 0) in vec2 a_grid;
+  uniform ivec2 iMeshSize;
+  uniform int iMeshInstances;
+
+a_grid spans 0..1 across the generated indexed grid. gl_VertexID and
+gl_InstanceID are available normally, and the shader owns gl_Position and all
+user varyings.
 
 Cubemap fragment passes:
 
@@ -28,7 +38,7 @@ mainCompute.
 Common uniforms
 ---------------
 
-Fragment and compute passes receive:
+Fragment, mesh vertex, and compute passes receive:
 
   vec3  iResolution
   float iTime
@@ -47,7 +57,7 @@ Compute passes additionally receive:
 Configured inputs are declared as iChannel0 through iChannel15. Their GLSL
 sampler type is derived from the input kind:
 
-  sampler2D    pass/buffer/compute output, texture, keyboard, music, video, webcam
+  sampler2D    pass/buffer/compute/mesh output, texture, keyboard, music, video, webcam
   samplerCube  cubemap
   sampler3D    volume
 

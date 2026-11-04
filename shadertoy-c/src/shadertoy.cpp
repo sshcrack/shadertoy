@@ -208,8 +208,22 @@ namespace {
                 return ShaderToy::ProjectPassKind::CubeMap;
             case ST_PASS_COMPUTE:
                 return ShaderToy::ProjectPassKind::Compute;
+            case ST_PASS_MESH:
+                return ShaderToy::ProjectPassKind::Mesh;
         }
         throw std::runtime_error("Unknown pass kind");
+    }
+
+    ShaderToy::MeshCull meshCull(const st_mesh_cull cull) {
+        switch(cull) {
+            case ST_MESH_CULL_NONE:
+                return ShaderToy::MeshCull::None;
+            case ST_MESH_CULL_BACK:
+                return ShaderToy::MeshCull::Back;
+            case ST_MESH_CULL_FRONT:
+                return ShaderToy::MeshCull::Front;
+        }
+        throw std::runtime_error("Unknown mesh cull mode");
     }
 
     ShaderToy::RenderFormat renderFormat(const st_render_format format) {
@@ -517,8 +531,9 @@ int st_project_set_pass_resolution(st_project* project, const char* passName, co
                                        [&](const auto& value) { return value.name == passName; });
         if(pass == project->description.passes.end())
             throw std::runtime_error("Unknown pass: " + std::string(passName));
-        if(pass->kind != ShaderToy::ProjectPassKind::Buffer && pass->kind != ShaderToy::ProjectPassKind::Compute)
-            throw std::runtime_error("Fixed pass resolution is only supported for buffer/compute passes");
+        if(pass->kind != ShaderToy::ProjectPassKind::Buffer && pass->kind != ShaderToy::ProjectPassKind::Compute &&
+           pass->kind != ShaderToy::ProjectPassKind::Mesh)
+            throw std::runtime_error("Fixed pass resolution is only supported for buffer/compute/mesh passes");
         pass->width = width;
         pass->height = height;
     });
@@ -535,7 +550,7 @@ int st_project_set_pass_format(st_project* project, const char* passName, const 
         if(pass == project->description.passes.end())
             throw std::runtime_error("Unknown pass: " + std::string(passName));
         if(pass->kind == ShaderToy::ProjectPassKind::Image || pass->kind == ShaderToy::ProjectPassKind::CubeMap)
-            throw std::runtime_error("Explicit render formats are only supported for buffer/compute passes");
+            throw std::runtime_error("Explicit render formats are only supported for buffer/compute/mesh passes");
         pass->renderFormat = renderFormat(format);
     });
 }
@@ -550,8 +565,9 @@ int st_project_add_pass_output(st_project* project, const char* passName, const 
                                        [&](const auto& value) { return value.name == passName; });
         if(pass == project->description.passes.end())
             throw std::runtime_error("Unknown pass: " + std::string(passName));
-        if(pass->kind != ShaderToy::ProjectPassKind::Buffer && pass->kind != ShaderToy::ProjectPassKind::Compute)
-            throw std::runtime_error("Multiple render targets are only supported for buffer/compute passes");
+        if(pass->kind != ShaderToy::ProjectPassKind::Buffer && pass->kind != ShaderToy::ProjectPassKind::Compute &&
+           pass->kind != ShaderToy::ProjectPassKind::Mesh)
+            throw std::runtime_error("Multiple render targets are only supported for buffer/compute/mesh passes");
         if(pass->extraRenderFormats.size() >= 7)
             throw std::runtime_error("A pass may expose at most 8 render targets");
         pass->extraRenderFormats.push_back(renderFormat(format));
@@ -596,6 +612,36 @@ int st_project_set_compute_local_size(st_project* project, const char* passName,
         pass->localSizeX = x;
         pass->localSizeY = y;
         pass->localSizeZ = z;
+    });
+}
+
+int st_project_configure_mesh(st_project* project, const char* passName, const char* vertexSource,
+                              const uint32_t gridWidth, const uint32_t gridHeight, const uint32_t instances,
+                              const int depth, const st_mesh_cull cull, const float* clearRgba) {
+    return guard([&] {
+        if(!project || !passName || !*passName)
+            throw std::runtime_error("Project and mesh pass name are required");
+        if(!vertexSource || !*vertexSource)
+            throw std::runtime_error("Mesh vertex source must not be empty");
+        if(gridWidth < 2 || gridHeight < 2 || instances == 0)
+            throw std::runtime_error("Mesh grid must be at least 2x2 with a positive instance count");
+        if(!clearRgba)
+            throw std::runtime_error("Mesh clear color is null");
+        const auto pass = std::find_if(project->description.passes.begin(), project->description.passes.end(),
+                                       [&](const auto& value) { return value.name == passName; });
+        if(pass == project->description.passes.end())
+            throw std::runtime_error("Unknown pass: " + std::string(passName));
+        if(pass->kind != ShaderToy::ProjectPassKind::Mesh)
+            throw std::runtime_error("Mesh configuration is only valid for mesh passes");
+        ShaderToy::MeshConfig mesh;
+        mesh.vertexSource = vertexSource;
+        mesh.width = gridWidth;
+        mesh.height = gridHeight;
+        mesh.instances = instances;
+        mesh.depth = depth != 0;
+        mesh.cull = meshCull(cull);
+        std::copy_n(clearRgba, 4, mesh.clear.begin());
+        pass->mesh = std::move(mesh);
     });
 }
 
@@ -915,6 +961,49 @@ int st_runtime_set_uniform_i32(st_runtime* runtime, const char* name, const int3
     });
 }
 
+int st_runtime_set_audio_input(st_runtime* runtime, const st_audio_input* input) {
+    return guard([&] {
+        if(!runtime)
+            throw std::runtime_error("Runtime is null");
+        ShaderToy::AudioInput audio;
+        if(input) {
+            if((input->spectrum_len && !input->spectrum) || (input->waveform_len && !input->waveform))
+                throw std::runtime_error("Audio spectrum/waveform pointer is null but its length is non-zero");
+            constexpr size_t maxSamples = 1u << 20;
+            if(input->spectrum_len > maxSamples || input->waveform_len > maxSamples)
+                throw std::runtime_error("Audio spectrum/waveform exceeds the 1048576 sample limit");
+            audio.available = input->available != 0;
+            audio.silence = input->silence != 0;
+            audio.sampleRate = input->sample_rate;
+            if(input->spectrum_len)
+                audio.spectrum.assign(input->spectrum, input->spectrum + input->spectrum_len);
+            if(input->waveform_len)
+                audio.waveform.assign(input->waveform, input->waveform + input->waveform_len);
+            audio.loudness = input->loudness;
+            audio.bass = input->bass;
+            audio.mid = input->mid;
+            audio.treble = input->treble;
+            audio.onset = input->onset;
+            audio.kick = input->kick;
+            audio.snare = input->snare;
+            audio.hihat = input->hihat;
+            audio.bpm = input->bpm;
+            audio.beatPhase = input->beat_phase;
+            audio.beatConfidence = input->beat_confidence;
+            audio.beatStrength = input->beat_strength;
+            audio.stereoWidth = input->stereo_width;
+            audio.stereoBalance = input->stereo_balance;
+            audio.stereoCorrelation = input->stereo_correlation;
+            audio.energyTrend = input->energy_trend;
+            audio.drop = input->drop;
+            audio.sectionChange = input->section_change;
+            audio.spectralCentroid = input->spectral_centroid;
+            audio.spectralFlux = input->spectral_flux;
+        }
+        runtime->runtime.setAudioInput(audio);
+    });
+}
+
 int st_runtime_render_rgb(st_runtime* runtime, const uint32_t width, const uint32_t height, uint8_t* outRgb,
                           const size_t outLen) {
     return guard([&] {
@@ -1053,6 +1142,18 @@ int st_runtime_update_texture_rgba8(st_runtime* runtime, const char* name, const
                 (static_cast<uint32_t>(rgba[offset + 3]) << 24U);
         }
         auto result = runtime->runtime.updateTexture(name, width, height, pixels);
+        if(!result)
+            throw result.error();
+    });
+}
+
+int st_runtime_set_wireframe_pass(st_runtime* runtime, const char* passName, const int enabled) {
+    return guard([&] {
+        if(!runtime)
+            throw std::runtime_error("Runtime is null");
+        if(!passName || !*passName)
+            throw std::runtime_error("Pass name must not be empty");
+        auto result = runtime->runtime.setWireframePass(passName, enabled != 0);
         if(!result)
             throw result.error();
     });
