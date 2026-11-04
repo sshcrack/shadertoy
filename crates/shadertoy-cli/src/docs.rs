@@ -17,6 +17,7 @@ pub fn topic(name: &str, schema: bool) -> Result<String> {
         "passes" => crate::include_file!("docs/passes.md"),
         "glsl" => crate::include_file!("docs/glsl.md"),
         "assets" => crate::include_file!("docs/assets.md"),
+        "audio" => crate::include_file!("docs/audio.md"),
         "buffers" => crate::include_file!("docs/buffers.md"),
         "channels" => crate::include_file!("docs/channels.md"),
         "state" => crate::include_file!("docs/state.md"),
@@ -29,7 +30,7 @@ pub fn topic(name: &str, schema: bool) -> Result<String> {
         "graph" => crate::include_file!("docs/graph.md"),
         "preview" => crate::include_file!("docs/preview.md"),
         other => bail!(
-            "unknown documentation topic '{other}'; expected agent, project, import, manifest, passes, glsl, assets, buffers, channels, state, sweep, blind, experiment, profile, test, trace, graph, or preview"
+            "unknown documentation topic '{other}'; expected agent, project, import, manifest, passes, glsl, assets, audio, buffers, channels, state, sweep, blind, experiment, profile, test, trace, graph, or preview"
         ),
     };
     Ok(text.trim().to_string())

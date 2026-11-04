@@ -436,6 +436,7 @@ mod tests {
             max_pass_gpu_ms: BTreeMap::new(),
             storage_assertions: Vec::<crate::manifest::TestStorageAssertion>::new(),
             assert_state_roundtrip: false,
+            audio: None,
         };
         let mut reasons = Vec::new();
         enforce_rmse_bounds(&test, 0.2, false, "variant", &mut reasons);

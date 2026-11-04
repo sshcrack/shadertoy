@@ -74,11 +74,13 @@ The reserved source "music" is a 512x2 sampler2D:
 The GLSL prelude also provides sampleAudioSpectrum() and sampleAudioWaveform();
 the latter maps row 1 back to -1..1.
 
-The headless CLI does not capture live host audio. A music channel therefore
-uses deterministic synthetic silence unless an embedding host supplies audio:
-spectrum samples are 0, waveform samples are centered at 0.5,
-iAudioAvailable is 0, and iAudioSilence is 1. This makes check/render/test/state
-runs repeatable instead of depending on microphone or system-audio state.
+The CLI never captures live microphone or system audio. By default a music
+channel is deterministic silence: spectrum samples are 0, waveform samples are
+centered at 0.5, iAudioAvailable is 0, and iAudioSilence is 1. Use an [audio]
+manifest section or the --audio flags for synthetic or audio-file analysis;
+see:
+
+  shadertoy docs audio
 
 For the sampler type selected for every input kind and the complete GLSL
 prelude contract, see:

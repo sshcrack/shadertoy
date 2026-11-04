@@ -103,6 +103,8 @@ fn run_case(
     test: &TestCase,
     update: bool,
 ) -> CaseReport {
+    let loaded = loaded.with_test_audio(test);
+    let loaded = loaded.as_ref();
     match run_case_inner(context, loaded, test, update) {
         Ok(report) => report,
         Err(error) => CaseReport {

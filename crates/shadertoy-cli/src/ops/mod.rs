@@ -1,3 +1,4 @@
+mod audio_probe;
 mod blind;
 mod blind_create;
 mod experiment;
@@ -29,6 +30,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub use audio_probe::{AudioProbeOptions, probe_audio};
 pub use blind::{judge_blind, reveal_blind};
 pub use blind_create::create_blind_comparison;
 pub use experiment::{ExperimentOptions, run_experiment};

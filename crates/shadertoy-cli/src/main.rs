@@ -1,4 +1,5 @@
 mod assets;
+mod audio;
 mod cli;
 mod docs;
 mod importer;

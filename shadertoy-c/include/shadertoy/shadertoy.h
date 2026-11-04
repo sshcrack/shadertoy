@@ -81,6 +81,40 @@ typedef uint32_t st_wrap;
 static const st_wrap ST_WRAP_CLAMP = 0;
 static const st_wrap ST_WRAP_REPEAT = 1;
 
+/* Host-provided music analysis for audio-reactive shaders (see shadertoy/AudioInput.hpp).
+ * `spectrum` holds normalized 0..1 magnitudes ordered low to high frequency and
+ * `waveform` holds -1..1 samples; both are copied and resampled to the 512x2
+ * music texture, so any length (including 0) is accepted. */
+typedef struct st_audio_input {
+    int available;
+    int silence;
+    float sample_rate;
+    const float* spectrum;
+    size_t spectrum_len;
+    const float* waveform;
+    size_t waveform_len;
+    float loudness;
+    float bass;
+    float mid;
+    float treble;
+    float onset;
+    float kick;
+    float snare;
+    float hihat;
+    float bpm;
+    float beat_phase;
+    float beat_confidence;
+    float beat_strength;
+    float stereo_width;
+    float stereo_balance;
+    float stereo_correlation;
+    float energy_trend;
+    float drop;
+    float section_change;
+    float spectral_centroid;
+    float spectral_flux;
+} st_audio_input;
+
 ST_NATIVE_EXPORT const char* st_last_error(void);
 
 /* Offscreen context lifecycle must be created and destroyed on the process main thread.
@@ -141,6 +175,8 @@ ST_NATIVE_EXPORT int st_runtime_set_key(st_runtime* runtime, uint8_t key, int do
 ST_NATIVE_EXPORT int st_runtime_clear_key_transients(st_runtime* runtime);
 ST_NATIVE_EXPORT int st_runtime_set_uniform_f32(st_runtime* runtime, const char* name, const float* values, size_t count);
 ST_NATIVE_EXPORT int st_runtime_set_uniform_i32(st_runtime* runtime, const char* name, int32_t value);
+/* Replace the music texture and iAudio* values. NULL restores the silent default. */
+ST_NATIVE_EXPORT int st_runtime_set_audio_input(st_runtime* runtime, const st_audio_input* input);
 
 ST_NATIVE_EXPORT int st_runtime_render_rgb(st_runtime* runtime, uint32_t width, uint32_t height, uint8_t* out_rgb,
                                            size_t out_len);

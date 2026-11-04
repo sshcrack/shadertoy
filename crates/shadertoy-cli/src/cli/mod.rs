@@ -1,3 +1,4 @@
+mod audio_args;
 mod conversions;
 use crate::docs;
 use crate::ops;
@@ -11,6 +12,7 @@ use crate::ops::{
 use crate::preview;
 use crate::preview::{PreviewConfig, PreviewTransport};
 use anyhow::Result;
+use audio_args::{AudioArgs, AudioProbeArgs};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde_json::json;
 use std::path::PathBuf;
@@ -26,6 +28,9 @@ struct Cli {
     /// Emit machine-readable JSON results and errors on stdout.
     #[arg(long, global = true)]
     json: bool,
+
+    #[command(flatten)]
+    audio: AudioArgs,
 
     #[command(subcommand)]
     command: Command,
@@ -77,6 +82,8 @@ enum Command {
     Pass(PassArgs),
     /// Safely mutate iChannel bindings in ShaderToy.toml.
     Channel(ChannelArgs),
+    /// Print the resolved host audio and its analysis values at chosen times.
+    Audio(AudioProbeArgs),
     /// Read concise built-in project/agent documentation.
     Docs(DocsArgs),
 }
@@ -815,7 +822,7 @@ enum ChannelCommand {
 
 #[derive(Debug, Args)]
 struct DocsArgs {
-    /// agent, project, import, manifest, passes, glsl, assets, buffers, channels, state, sweep, blind, experiment, profile, test, trace, graph, or preview.
+    /// agent, project, import, manifest, passes, glsl, assets, audio, buffers, channels, state, sweep, blind, experiment, profile, test, trace, graph, or preview.
     #[arg(default_value = "agent")]
     topic: String,
     /// Print the exact JSON Schema for ShaderToy.toml (manifest topic only).
@@ -943,7 +950,10 @@ pub fn run() -> ExitCode {
     };
     let json_mode = cli.json;
 
-    let result = dispatch(cli.command, json_mode);
+    let result = cli.audio.into_override().and_then(|audio| {
+        crate::audio::set_cli_override(audio);
+        dispatch(cli.command, json_mode)
+    });
     match result {
         Ok(Some(output)) => {
             let success = output
@@ -1272,6 +1282,7 @@ fn dispatch(command: Command, json_mode: bool) -> Result<Option<Output>> {
                 ops::remove_channel(&args.project, &pass, channel)?
             }
         },
+        Command::Audio(args) => ops::probe_audio(&args.into_options())?,
         Command::Docs(args) => {
             let text = docs::topic(&args.topic, args.schema)?;
             Output {

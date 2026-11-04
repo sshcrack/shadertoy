@@ -4,6 +4,11 @@ All notable changes to the Rust library and CLI are recorded here.
 
 ## Unreleased
 
+- Added CLI host audio for `music` channels and `iAudio*` uniforms: deterministic silence (default), synthetic beat-driven analysis (balanced/bass/percussion/ambient profiles matching the led-matrix preview generator), or frame-accurate audio-file analysis (native PCM/float WAV, other formats through ffmpeg) with a ShaderToy-compatible 512-bin spectrum, waveform, band levels, kick/snare/hihat onsets, tempo/beat-phase detection, stereo, drop, and section-change features.
+- Configure it with a manifest `[audio]` section, a per-`[[test]]` `audio` table that pins reference renders, or the global `--audio none|synthetic|FILE`, `--audio-profile`, `--audio-bpm`, `--audio-offset`, `--audio-gain`, and `--audio-loop` flags on every rendering command (including preview, profile, blind/experiment STTF sources, and replay). `check`, `render`, `render-frames`, and `render-video` report the resolved source in JSON, and traces record and exactly replay synthetic audio.
+- Added `shadertoy audio` to print analysis values at chosen times and `shadertoy docs audio`.
+- Added `st_audio_input` / `st_runtime_set_audio_input()` to the C ABI and `AudioInput` with `Runtime::set_audio_input()` / `clear_audio_input()` to the Rust library.
+
 ## 2.6.1
 
 - Fixed first-frame mesh color/depth consumers by correcting wireframe-composite program validation so mesh construction no longer leaks `GL_INVALID_OPERATION` into subsequent sampler setup; this also fixes paused-preview mesh reload/preset-switch frames.

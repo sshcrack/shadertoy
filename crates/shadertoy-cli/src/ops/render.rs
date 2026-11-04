@@ -106,6 +106,7 @@ pub fn render_project(options: &RenderOptions) -> Result<Output> {
         ),
         json: json!({
             "ok": true,
+            "audio": media.audio().to_json(),
             "project": loaded.manifest.project.name,
             "output": output,
             "width": output_width,
@@ -505,6 +506,7 @@ pub fn render_frames_project(options: &RenderFramesOptions) -> Result<Output> {
         ),
         json: json!({
             "ok": true,
+            "audio": media.audio().to_json(),
             "project": loaded.manifest.project.name,
             "output_dir": output_dir,
             "outputs": outputs,

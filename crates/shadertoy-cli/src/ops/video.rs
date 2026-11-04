@@ -123,6 +123,7 @@ pub fn render_video_project(options: &RenderVideoOptions) -> Result<Output> {
         ),
         json: json!({
             "ok": true,
+            "audio": media.audio().to_json(),
             "project": loaded.manifest.project.name,
             "output": output,
             "pass": selected_pass,

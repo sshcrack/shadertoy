@@ -58,6 +58,9 @@ struct TraceMetadata {
     asset_sha256: BTreeMap<String, String>,
     pass_timings: Vec<TraceTiming>,
     graph_diagnostics: serde_json::Value,
+    /// Synthetic host audio replayed with the trace (file audio is not embedded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    audio: Option<crate::audio::AudioSection>,
     state_header: serde_json::Value,
     synchronization: serde_json::Value,
     artifacts: BTreeMap<String, TraceArtifact>,
@@ -94,6 +97,12 @@ pub fn capture_trace(options: &TraceCaptureOptions) -> Result<Output> {
     validate_fps(fps)?;
     let frame = resolve_target_frame(&loaded, None, options.frame, options.time, fps)?;
     let media = crate::media::MediaInputs::new_headless(&loaded)?;
+    let audio = match media.audio() {
+        crate::audio::AudioDriver::File { .. } => {
+            bail!("trace capture does not embed audio files; use --audio synthetic or --audio none")
+        }
+        driver => driver.to_section(),
+    };
     let uniform_values =
         crate::uniforms::parse_assignments(&loaded.manifest.uniforms, &options.set_uniforms)?;
 
@@ -180,6 +189,7 @@ pub fn capture_trace(options: &TraceCaptureOptions) -> Result<Output> {
             })
             .collect(),
         graph_diagnostics: serde_json::to_value(diagnostics)?,
+        audio,
         state_header: serde_json::to_value(&state.header)?,
         synchronization,
         artifacts,
@@ -276,12 +286,18 @@ pub fn replay_trace(options: &TraceReplayOptions) -> Result<Output> {
         .context("failed to create headless OpenGL context for trace replay")?;
     let mut runtime = Runtime::new(&context)?;
     runtime.load_sttf(&sttf)?;
+    // The recorded audio is part of the trace; `--audio*` flags do not apply.
+    let audio = match &metadata.audio {
+        Some(section) => crate::audio::AudioDriver::resolve(&trace_dir, section, Some(section))?,
+        None => crate::audio::AudioDriver::Silent,
+    };
     let actual = render_sttf_from_zero(
         &mut runtime,
         metadata.frame,
         metadata.fps,
         metadata.width,
         metadata.height,
+        &audio,
     )?;
 
     if let Some(output) = &options.output {
@@ -498,21 +514,28 @@ fn render_sttf_from_zero(
     fps: f32,
     width: u32,
     height: u32,
+    audio: &crate::audio::AudioDriver,
 ) -> Result<RgbImage> {
     if target_frame < 0 {
         bail!("trace frame must be non-negative");
     }
     runtime.set_fixed_state(0.0, 0, fps)?;
+    let render = |runtime: &mut Runtime<'_>| -> Result<RgbImage> {
+        if !audio.is_silent() {
+            audio.apply(runtime, runtime.time())?;
+        }
+        Ok(runtime.render(width, height)?)
+    };
     if target_frame == 0 {
-        return runtime.render(width, height).map_err(Into::into);
+        return render(runtime);
     }
-    let _ = runtime.render(width, height)?;
+    let _ = render(runtime)?;
     for _ in 1..target_frame {
         runtime.tick_fixed(1.0 / fps, fps)?;
-        let _ = runtime.render(width, height)?;
+        let _ = render(runtime)?;
     }
     runtime.tick_fixed(1.0 / fps, fps)?;
-    runtime.render(width, height).map_err(Into::into)
+    render(runtime)
 }
 
 fn validate_trace_dir(path: &Path) -> Result<()> {

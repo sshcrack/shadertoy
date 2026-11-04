@@ -483,6 +483,12 @@ fn render_sttf_frames(
         .load_sttf(path)
         .with_context(|| format!("failed to load STTF build {}", path.display()))?;
     apply_sttf_uniform_overrides(&mut runtime, path, set_uniforms)?;
+    // STTF builds carry no manifest, so only the global `--audio*` flags apply.
+    let audio = crate::audio::AudioDriver::resolve(
+        &std::env::current_dir()?,
+        &crate::audio::AudioSection::default(),
+        None,
+    )?;
 
     let mut images = Vec::with_capacity(frames.len());
     let mut next = 0usize;
@@ -490,6 +496,10 @@ fn render_sttf_frames(
     for frame in 0..=max_frame {
         if frame > 0 {
             runtime.tick_fixed(1.0 / fps, fps)?;
+        }
+        if !audio.is_silent() {
+            let time = runtime.time();
+            audio.apply(&mut runtime, time)?;
         }
         let image = runtime.render(width, height)?;
         if frame == frames[next] {

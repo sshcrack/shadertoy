@@ -961,6 +961,49 @@ int st_runtime_set_uniform_i32(st_runtime* runtime, const char* name, const int3
     });
 }
 
+int st_runtime_set_audio_input(st_runtime* runtime, const st_audio_input* input) {
+    return guard([&] {
+        if(!runtime)
+            throw std::runtime_error("Runtime is null");
+        ShaderToy::AudioInput audio;
+        if(input) {
+            if((input->spectrum_len && !input->spectrum) || (input->waveform_len && !input->waveform))
+                throw std::runtime_error("Audio spectrum/waveform pointer is null but its length is non-zero");
+            constexpr size_t maxSamples = 1u << 20;
+            if(input->spectrum_len > maxSamples || input->waveform_len > maxSamples)
+                throw std::runtime_error("Audio spectrum/waveform exceeds the 1048576 sample limit");
+            audio.available = input->available != 0;
+            audio.silence = input->silence != 0;
+            audio.sampleRate = input->sample_rate;
+            if(input->spectrum_len)
+                audio.spectrum.assign(input->spectrum, input->spectrum + input->spectrum_len);
+            if(input->waveform_len)
+                audio.waveform.assign(input->waveform, input->waveform + input->waveform_len);
+            audio.loudness = input->loudness;
+            audio.bass = input->bass;
+            audio.mid = input->mid;
+            audio.treble = input->treble;
+            audio.onset = input->onset;
+            audio.kick = input->kick;
+            audio.snare = input->snare;
+            audio.hihat = input->hihat;
+            audio.bpm = input->bpm;
+            audio.beatPhase = input->beat_phase;
+            audio.beatConfidence = input->beat_confidence;
+            audio.beatStrength = input->beat_strength;
+            audio.stereoWidth = input->stereo_width;
+            audio.stereoBalance = input->stereo_balance;
+            audio.stereoCorrelation = input->stereo_correlation;
+            audio.energyTrend = input->energy_trend;
+            audio.drop = input->drop;
+            audio.sectionChange = input->section_change;
+            audio.spectralCentroid = input->spectral_centroid;
+            audio.spectralFlux = input->spectral_flux;
+        }
+        runtime->runtime.setAudioInput(audio);
+    });
+}
+
 int st_runtime_render_rgb(st_runtime* runtime, const uint32_t width, const uint32_t height, uint8_t* outRgb,
                           const size_t outLen) {
     return guard([&] {

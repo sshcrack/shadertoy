@@ -3,6 +3,7 @@ use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use crate::audio::AudioSection;
 use crate::uniforms::{UniformDefinition, UniformValue, validate_definitions};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -24,6 +25,9 @@ pub struct Manifest {
     pub render: RenderSection,
     #[serde(default)]
     pub shader: ShaderSection,
+    /// Host audio for `music` channels and `iAudio*` uniforms. See `shadertoy docs audio`.
+    #[serde(default, skip_serializing_if = "AudioSection::is_default")]
+    pub audio: AudioSection,
     #[serde(default, rename = "uniform", skip_serializing_if = "Vec::is_empty")]
     pub uniforms: Vec<UniformDefinition>,
     #[serde(default, rename = "asset", skip_serializing_if = "Vec::is_empty")]
@@ -205,6 +209,9 @@ pub struct TestCase {
     /// Serialize persistent pass/SSBO state, reload it into a fresh runtime, and verify exact round-trip contents.
     #[serde(default)]
     pub assert_state_roundtrip: bool,
+    /// Per-test host audio. Replaces both the manifest [audio] section and `--audio*` flags.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<AudioSection>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -478,6 +485,8 @@ pub struct Asset {
 pub struct LoadedManifest {
     pub root: PathBuf,
     pub manifest: Manifest,
+    /// True when `manifest.audio` came from a `[[test]]` case and must ignore `--audio*` flags.
+    pub audio_pinned: bool,
 }
 
 impl Manifest {
@@ -493,6 +502,7 @@ impl Manifest {
             },
             render: RenderSection::default(),
             shader: ShaderSection::default(),
+            audio: AudioSection::default(),
             uniforms: Vec::new(),
             assets: Vec::new(),
             passes: vec![Pass {
@@ -527,6 +537,7 @@ impl Manifest {
             },
             render: RenderSection::default(),
             shader: ShaderSection::default(),
+            audio: AudioSection::default(),
             uniforms: Vec::new(),
             assets: Vec::new(),
             passes: vec![
@@ -612,6 +623,12 @@ impl Manifest {
             validate_project_relative_path(include_dir, "shader.include_dirs entry")?;
         }
         self.validate_presets()?;
+        self.audio.validate("[audio]")?;
+        for test in &self.tests {
+            if let Some(audio) = &test.audio {
+                audio.validate(&format!("test '{}' audio", test.name))?;
+            }
+        }
         validate_definitions(&self.uniforms)?;
         if self.passes.is_empty() {
             bail!("project must contain at least one [[pass]]");
@@ -1559,7 +1576,26 @@ impl LoadedManifest {
             manifest.apply_preset(preset)?;
         }
         crate::project_schema::refresh_existing(&root)?;
-        Ok(Self { root, manifest })
+        Ok(Self {
+            root,
+            manifest,
+            audio_pinned: false,
+        })
+    }
+}
+
+impl LoadedManifest {
+    /// Copy whose host audio is fixed to a test case's `audio` section, if it has one.
+    pub fn with_test_audio(&self, test: &TestCase) -> std::borrow::Cow<'_, Self> {
+        match &test.audio {
+            None => std::borrow::Cow::Borrowed(self),
+            Some(audio) => {
+                let mut pinned = self.clone();
+                pinned.manifest.audio = audio.clone();
+                pinned.audio_pinned = true;
+                std::borrow::Cow::Owned(pinned)
+            }
+        }
     }
 }
 

@@ -306,7 +306,15 @@ Run it with an optional STTF file or ShaderToy URL:
 
 ## Host audio / music visualization
 
-Embedders can feed live music analysis through Runtime::setAudioInput().
+Embedders can feed live music analysis through Runtime::setAudioInput() (C++), st_runtime_set_audio_input() (C), or Runtime::set_audio_input() (Rust).
+
+The CLI drives the same inputs with deterministic silence (default), synthetic beat-driven analysis, or frame-accurate analysis of an audio file, configured by an `[audio]` manifest section, per-test `audio`, or the global `--audio none|synthetic|FILE` flags. See `shadertoy docs audio`:
+
+~~~bash
+shadertoy render-frames --range 0:600:30 --audio song.mp3 --audio-offset 45
+shadertoy render --frame 120 --audio synthetic --audio-profile bass --audio-bpm 128
+shadertoy audio --audio song.mp3 --time 45.5 --json   # inspect the analysis
+~~~
 
 Shaders that declare a ShaderToy music, musicstream, mic, or audio input receive the conventional 512x2 audio texture in their assigned iChannelN:
 

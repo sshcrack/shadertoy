@@ -131,6 +131,7 @@ pub fn materialize_capture(
         },
         render: RenderSection::default(),
         shader: ShaderSection::default(),
+        audio: Default::default(),
         uniforms: Vec::new(),
         assets: builder.assets,
         passes: builder.manifest_passes,

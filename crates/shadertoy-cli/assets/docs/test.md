@@ -64,6 +64,15 @@ Compare two uniform configurations without maintaining a PNG fixture:
 Use max_rmse when the two variants must stay close. If neither min_rmse nor
 max_rmse is specified for reference_uniforms, tolerance is the maximum RMSE.
 
+Pin host audio for audio-reactive cases; a test's audio replaces both the
+manifest [audio] section and any --audio flags (see shadertoy docs audio):
+
+  [[test]]
+  name = "on-beat"
+  frame = 60
+  audio = { source = "synthetic", profile = "bass", bpm = 120 }
+  reference = "tests/on-beat.png"
+
 Performance, storage, and state
 -------------------------------
 

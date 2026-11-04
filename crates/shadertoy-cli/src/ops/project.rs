@@ -46,6 +46,14 @@ pub fn init_project(path: &Path, template: Template) -> Result<Output> {
 pub fn check_project(options: &CheckOptions) -> Result<Output> {
     let loaded = LoadedManifest::load_with_preset(&options.project, options.preset.as_deref())?;
     ensure_source_files_exist(&loaded)?;
+    // Resolve (and decode) configured audio so missing/undecodable files fail here, not mid-render.
+    let audio = crate::audio::AudioDriver::resolve(&loaded.root, &loaded.manifest.audio, None)?;
+    for test in &loaded.manifest.tests {
+        if let Some(section) = &test.audio {
+            crate::audio::AudioDriver::resolve(&loaded.root, section, Some(section))
+                .with_context(|| format!("test '{}' audio", test.name))?;
+        }
+    }
 
     let diagnostics = super::graph::analyze_graph(&loaded, options.pedantic)?;
     let errors = diagnostics
@@ -132,6 +140,9 @@ pub fn check_project(options: &CheckOptions) -> Result<Output> {
         ));
     }
     human.push(')');
+    if !audio.is_silent() {
+        human.push_str(&format!("\n  audio: {}", audio.describe()));
+    }
     for diagnostic in &diagnostics {
         human.push_str(&format!(
             "\n  {} [{}] {}",
@@ -153,6 +164,7 @@ pub fn check_project(options: &CheckOptions) -> Result<Output> {
             "compiled": true,
             "sound_passes": sound_passes,
             "mesh_passes": mesh_passes,
+            "audio": audio.to_json(),
             "pedantic": options.pedantic,
             "diagnostics": diagnostics,
             "errors": errors,
